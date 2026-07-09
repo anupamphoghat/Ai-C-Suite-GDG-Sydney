@@ -1,20 +1,20 @@
-# SUCCESS TUTORING: BUSINESS CONTEXT & OPERATIONS
+# GLOBALTECH SOLUTIONS: BUSINESS CONTEXT & OPERATIONS
 
-## 1. Market Positioning (The "Bimodal" Model)
-- **The Physical (Lounge):** Premium, collaborative studio for mentorship. Focus on "The Why."
-- **The Digital (Platform):** Separate AI-driven tool for exam drills (NAPLAN, OC, Selective). Focus on "The Numbers."
-- **Location:** Macquarie Park/Ryde area, NSW, Australia.
+## 1. Market Positioning (The "Hybrid" Enterprise Model)
+- **Enterprise Software:** Premium, highly-customizable SaaS platform for Fortune 500 companies. Focus on "Scalability and Security."
+- **SMB Cloud Tools:** Streamlined, self-serve cloud tools for small-to-medium businesses. Focus on "Ease of Use and Speed."
+- **Location:** Global presence with headquarters in major tech hubs (San Francisco, London, Singapore).
 
-## 2. The Selective/OC Cycle (The NSW Calendar)
-- **Peak Season 1 (Jan-May):** Selective School Test Prep (Year 6).
-- **Peak Season 2 (June-Aug):** OC Placement Test Prep (Year 4).
-- **Secondary Focus:** NAPLAN and general K-12 English/Maths excellence.
+## 2. Global Sales Cycle
+- **Q1-Q2:** Focus on Enterprise budget renewals and major infrastructure upgrades.
+- **Q3-Q4:** Focus on SMB end-of-year budget allocations and aggressive market expansion.
+- **Secondary Focus:** Continuous up-selling of AI and data analytics modules.
 
 ## 3. Personnel Structure
-- **Tutors:** High-ATAR university students (Top 5% preferred) with high EQ.
-- **Role:** Not just teachers, but "Academic Mentors" who have navigated the NSW system recently.
+- **Consultants:** Top-tier software engineers and industry-specific business analysts.
+- **Role:** Not just developers, but "Strategic Partners" who guide digital transformation at scale.
 
 ## 4. Economic Vital Signs
-- **Core KPI:** Weekly New Enrollments.
-- **Conversion Goal:** 30% of trials should convert to term-based enrollments.
-- **Excellence Filter:** Never sacrifice tutor quality for rapid enrollment growth.
+- **Core KPI:** Monthly Recurring Revenue (MRR) and Net Revenue Retention (NRR).
+- **Conversion Goal:** Maintain a churn rate below 3% annually.
+- **Excellence Filter:** Never sacrifice product stability or security for rapid feature deployment.

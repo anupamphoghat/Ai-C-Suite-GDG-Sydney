@@ -2,3 +2,6 @@ streamlit
 google-cloud-aiplatform
 vertexai
 google-cloud-storage
+google-antigravity
+pydantic
+python-dotenv
