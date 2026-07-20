@@ -5,3 +5,4 @@ google-cloud-storage
 google-antigravity
 pydantic
 python-dotenv
+protobuf>=5.26.1
