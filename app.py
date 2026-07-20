@@ -69,15 +69,15 @@ if "conversation_id" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# File Upload Section
-st.sidebar.header("Upload Files for Context")
-uploaded_file = st.sidebar.file_uploader("Upload a file")
-if st.sidebar.button("Upload to GCS") and uploaded_file is not None:
-    with st.spinner("Uploading..."):
-        gcs_uri = upload_to_gcs(uploaded_file, uploaded_file.name)
-        if gcs_uri:
-            st.sidebar.success(f"Uploaded to {gcs_uri}")
-            st.session_state.messages.append({"role": "system", "content": f"User uploaded file to GCS: {gcs_uri}. Tell the agent to refer to this URI if needed."})
+# File Upload Section (Main Dashboard)
+with st.expander("Upload File for Analysis", expanded=False):
+    uploaded_file = st.file_uploader("Upload a document for the C-Suite agents to analyze")
+    if st.button("Upload to GCS") and uploaded_file is not None:
+        with st.spinner("Uploading..."):
+            gcs_uri = upload_to_gcs(uploaded_file, uploaded_file.name)
+            if gcs_uri:
+                st.success(f"Uploaded to {gcs_uri}")
+                st.session_state.messages.append({"role": "system", "content": f"User uploaded file to GCS: {gcs_uri}. Tell the agent to refer to this URI if needed for analysis."})
 
 # Chat Interface
 for message in st.session_state.messages:
