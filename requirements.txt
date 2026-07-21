@@ -1,8 +1,5 @@
-streamlit
-google-cloud-aiplatform
-vertexai
-google-cloud-storage
-google-antigravity
-pydantic
-python-dotenv
-protobuf>=5.26.1
+streamlit==1.59.2
+google-cloud-storage==3.13.0
+google-antigravity==0.1.7
+pydantic==2.13.4
+python-dotenv==1.2.2
