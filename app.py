@@ -78,13 +78,21 @@ if "messages" not in st.session_state:
 
 # File Upload Section (Main Dashboard)
 with st.expander("Upload File for Analysis", expanded=False):
-    uploaded_file = st.file_uploader("Upload a document for the C-Suite agents to analyze")
-    if st.button("Upload to GCS") and uploaded_file is not None:
-        with st.spinner("Uploading..."):
-            gcs_uri = upload_to_gcs(uploaded_file, uploaded_file.name)
-            if gcs_uri:
-                st.success(f"Uploaded to {gcs_uri}")
-                st.session_state.messages.append({"role": "system", "content": f"User uploaded file to GCS: {gcs_uri}. Tell the agent to refer to this URI if needed for analysis."})
+    uploaded_files = st.file_uploader(
+        "Upload documents for the C-Suite agents to analyze",
+        accept_multiple_files=True,
+    )
+    if st.button("Upload to GCS") and uploaded_files:
+        with st.spinner(f"Uploading {len(uploaded_files)} file(s)..."):
+            uploaded_uris = []
+            for uploaded_file in uploaded_files:
+                gcs_uri = upload_to_gcs(uploaded_file, uploaded_file.name)
+                if gcs_uri:
+                    uploaded_uris.append(gcs_uri)
+            if uploaded_uris:
+                st.success(f"Uploaded {len(uploaded_uris)} file(s): " + ", ".join(uploaded_uris))
+                uris_list = "\n".join(f"- {uri}" for uri in uploaded_uris)
+                st.session_state.messages.append({"role": "system", "content": f"User uploaded the following files to GCS:\n{uris_list}\nTell the agent to refer to these URIs if needed for analysis."})
 
 # Chat Interface
 for message in st.session_state.messages:
