@@ -27,22 +27,28 @@ SERVICE_PREFIX="$(printf '%s' "${SERVICE_PREFIX:?Set SERVICE_PREFIX in .env}" \
 ACTIVE_ROLES_CSV="${ACTIVE_ROLES_CSV:-cfo,cso,cmo,chro,cto}"
 IFS=',' read -ra ROLES <<< "${ACTIVE_ROLES_CSV// /}"
 
-TARGETS=()
+# A newline-delimited list rather than an array: bash 3.2 (the macOS default)
+# errors on ${arr[@]} for an empty array when `set -u` is on.
+TARGETS=""
+TARGET_COUNT=0
 for ROLE in "${ROLES[@]}" orchestrator; do
   SVC="${SERVICE_PREFIX}-${ROLE}"
   LABEL="$(gcloud run services describe "$SVC" --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" --format='value(metadata.labels.managed-by)' 2>/dev/null || true)"
-  [[ "$LABEL" == "ai-csuite-demo" ]] && TARGETS+=("$SVC")
+  if [[ "$LABEL" == "ai-csuite-demo" ]]; then
+    TARGETS="${TARGETS}${SVC}"$'\n'
+    TARGET_COUNT=$((TARGET_COUNT + 1))
+  fi
 done
 
-if [[ ${#TARGETS[@]} -eq 0 ]]; then
+if [[ $TARGET_COUNT -eq 0 ]]; then
   log "Nothing to remove for prefix '${SERVICE_PREFIX}' in ${GCP_REGION}."
   exit 0
 fi
 
 printf '\nThe following Cloud Run services will be DELETED from %s (%s):\n\n' \
   "$GCP_PROJECT_ID" "$GCP_REGION"
-printf '  %s\n' "${TARGETS[@]}"
+printf '%s' "$TARGETS" | sed 's/^/  /'
 printf '\nThe Gemini API key secret will NOT be touched.\n\n'
 
 if [[ "${1:-}" != "--yes" ]]; then
@@ -50,12 +56,13 @@ if [[ "${1:-}" != "--yes" ]]; then
   [[ "$CONFIRM" == "$SERVICE_PREFIX" ]] || die "Cancelled."
 fi
 
-for SVC in "${TARGETS[@]}"; do
-  log "Deleting $SVC…"
+while IFS= read -r SVC; do
+  [[ -n "$SVC" ]] || continue
+  log "Deleting ${SVC}..."
   gcloud run services delete "$SVC" --project "$GCP_PROJECT_ID" \
     --region "$GCP_REGION" --quiet
-done
+done <<< "$TARGETS"
 
-printf '\n\033[1;32m✓ Removed %d service(s).\033[0m\n' "${#TARGETS[@]}"
+printf '\n\033[1;32m✓ Removed %d service(s).\033[0m\n' "$TARGET_COUNT"
 printf '  Left in place: Artifact Registry images, the runtime service account,\n'
 printf '  and the Secret Manager secret. Remove those by hand if you want to.\n\n'

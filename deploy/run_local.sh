@@ -35,7 +35,7 @@ export CONTEXT_DIR="${REPO_ROOT}/context"
 
 PIDS=()
 cleanup() {
-  log "Shutting down…"
+  log "Shutting down..."
   for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done
   wait 2>/dev/null || true
 }
@@ -60,7 +60,7 @@ AGENT_URLS_JSON+="}"
 export AGENT_URLS_JSON
 export ACTIVE_ROLES_CSV
 
-log "Waiting for agents to become healthy…"
+log "Waiting for agents to become healthy..."
 READY=0
 for _ in $(seq 1 40); do
   READY=1

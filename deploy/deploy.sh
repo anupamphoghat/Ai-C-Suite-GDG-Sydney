@@ -124,7 +124,7 @@ done
 # --------------------------------------------------------------------------
 # 1. APIs
 # --------------------------------------------------------------------------
-log "Enabling required APIs (idempotent)…"
+log "Enabling required APIs (idempotent)..."
 APIS=(run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
       artifactregistry.googleapis.com generativelanguage.googleapis.com)
 [[ "$DECISION_LOG_BACKEND" == "firestore" ]] && APIS+=(firestore.googleapis.com)
@@ -146,7 +146,7 @@ log "Secret '$GEMINI_API_KEY_SECRET' present."
 # --------------------------------------------------------------------------
 if ! gcloud artifacts repositories describe "$ARTIFACT_REPO" \
       --location "$GCP_REGION" --project "$GCP_PROJECT_ID" &>/dev/null; then
-  log "Creating Artifact Registry repo '$ARTIFACT_REPO'…"
+  log "Creating Artifact Registry repo '$ARTIFACT_REPO'..."
   gcloud artifacts repositories create "$ARTIFACT_REPO" \
     --repository-format=docker --location "$GCP_REGION" \
     --description="AI C-Suite demo images" --project "$GCP_PROJECT_ID" --quiet
@@ -156,19 +156,19 @@ fi
 # 4. Runtime service account (single least-privilege identity)
 # --------------------------------------------------------------------------
 if ! gcloud iam service-accounts describe "$RUNTIME_SA" --project "$GCP_PROJECT_ID" &>/dev/null; then
-  log "Creating runtime service account $RUNTIME_SA…"
+  log "Creating runtime service account $RUNTIME_SA..."
   gcloud iam service-accounts create "$RUNTIME_SA_NAME" \
     --display-name="AI C-Suite runtime" --project "$GCP_PROJECT_ID" --quiet
 fi
 
-log "Granting Secret Manager access to the runtime service account…"
+log "Granting Secret Manager access to the runtime service account..."
 gcloud secrets add-iam-policy-binding "$GEMINI_API_KEY_SECRET" \
   --member="serviceAccount:${RUNTIME_SA}" \
   --role="roles/secretmanager.secretAccessor" \
   --project "$GCP_PROJECT_ID" --quiet >/dev/null
 
 if [[ "$DECISION_LOG_BACKEND" == "firestore" ]]; then
-  log "Granting Firestore access…"
+  log "Granting Firestore access..."
   gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
     --member="serviceAccount:${RUNTIME_SA}" \
     --role="roles/datastore.user" --quiet >/dev/null
@@ -180,12 +180,12 @@ fi
 EXEC_IMAGE="${REGISTRY}/executive:${IMAGE_TAG}"
 ORCH_IMAGE="${REGISTRY}/orchestrator:${IMAGE_TAG}"
 
-log "Building executive image…"
+log "Building executive image..."
 gcloud builds submit --config deploy/cloudbuild.yaml \
   --substitutions "_DOCKERFILE=services/executive/Dockerfile,_IMAGE=${EXEC_IMAGE}" \
   --project "$GCP_PROJECT_ID" --quiet
 
-log "Building orchestrator image…"
+log "Building orchestrator image..."
 gcloud builds submit --config deploy/cloudbuild.yaml \
   --substitutions "_DOCKERFILE=services/orchestrator/Dockerfile,_IMAGE=${ORCH_IMAGE}" \
   --project "$GCP_PROJECT_ID" --quiet
@@ -193,7 +193,9 @@ gcloud builds submit --config deploy/cloudbuild.yaml \
 # --------------------------------------------------------------------------
 # 6. Executive agents -- one image, five PRIVATE deployments
 # --------------------------------------------------------------------------
-declare -A AGENT_URL
+# Parallel indexed array to ROLES. Deliberately not an associative array:
+# macOS ships bash 3.2, which has no `declare -A`.
+AGENT_URLS=()
 for ROLE in "${ROLES[@]}"; do
   SVC="${SERVICE_PREFIX}-${ROLE}"
   log "Deploying executive agent: $SVC (EXEC_ROLE=$ROLE)"
@@ -219,17 +221,21 @@ for ROLE in "${ROLES[@]}"; do
     --role="roles/run.invoker" \
     --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null
 
-  AGENT_URL["$ROLE"]="$(gcloud run services describe "$SVC" \
+  SVC_URL="$(gcloud run services describe "$SVC" \
     --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
-  log "  → ${AGENT_URL[$ROLE]}  (private, invoker: $RUNTIME_SA)"
+  [[ -n "$SVC_URL" ]] || die "Deployed ${SVC} but could not read back its URL."
+  AGENT_URLS+=("$SVC_URL")
+  log "  -> ${SVC_URL}  (private, invoker: ${RUNTIME_SA})"
 done
 
-# Assemble the role -> URL map the orchestrator needs.
-AGENT_URLS_JSON="{"; SEP=""
-for ROLE in "${ROLES[@]}"; do
-  AGENT_URLS_JSON+="${SEP}\"${ROLE}\":\"${AGENT_URL[$ROLE]}\""; SEP=","
+# Assemble the role -> URL map the orchestrator needs, pairing ROLES with the
+# parallel AGENT_URLS array by index.
+AGENT_URLS_JSON="{"
+for I in "${!ROLES[@]}"; do
+  [[ $I -gt 0 ]] && AGENT_URLS_JSON="${AGENT_URLS_JSON},"
+  AGENT_URLS_JSON="${AGENT_URLS_JSON}\"${ROLES[$I]}\":\"${AGENT_URLS[$I]}\""
 done
-AGENT_URLS_JSON+="}"
+AGENT_URLS_JSON="${AGENT_URLS_JSON}}"
 
 # --------------------------------------------------------------------------
 # 7. Orchestrator -- PUBLIC
@@ -285,6 +291,6 @@ ORCH_URL="$(gcloud run services describe "$ORCH_SVC" \
 printf '\n\033[1;32m✓ Deployment complete\033[0m\n\n'
 printf '  Dashboard ....... %s\n' "$ORCH_URL"
 printf '  Agent health .... %s/api/agents/health\n' "$ORCH_URL"
-printf '  Executive agents  %d private Cloud Run services\n\n' "${#AGENT_URL[@]}"
+printf '  Executive agents  %d private Cloud Run services\n\n' "${#AGENT_URLS[@]}"
 printf '  Verify before you present:\n'
 printf '    curl -s %s/api/agents/health | jq\n\n' "$ORCH_URL"

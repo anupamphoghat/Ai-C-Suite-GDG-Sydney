@@ -138,6 +138,22 @@ only deletes services carrying it.
 ./deploy/teardown.sh          # removes just this prefix's services
 ```
 
+Set `SERVICE_PREFIX` to the namespace only — `tech`, not `tech-cfo`. The role
+suffix is appended for you, so `tech-cfo` would produce `tech-cfo-cfo`.
+
+### Rehearse the deploy without touching Google Cloud
+
+```bash
+./tests/deploy_dryrun.sh
+```
+
+Runs the real `deploy.sh` against a mocked `gcloud` under *your* bash, and
+asserts the resource names, the private/public split, the IAM bindings and the
+generated agent URL map. It also lints for bash 4+ syntax, because macOS ships
+bash 3.2 and these scripts have to run there. Worth doing before the real
+deploy — it catches naming and quoting mistakes in two seconds rather than
+four minutes in.
+
 ## Run locally
 
 ```bash
