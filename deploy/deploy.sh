@@ -212,6 +212,7 @@ for ROLE in "${ROLES[@]}"; do
     --timeout "${AGENT_TIMEOUT:-300}" \
     --min-instances "${AGENT_MIN_INSTANCES:-0}" \
     --max-instances "${AGENT_MAX_INSTANCES:-4}" \
+    --ingress "${AGENT_INGRESS:-all}" \
     --labels "managed-by=ai-csuite-demo,csuite-prefix=${SERVICE_PREFIX},csuite-role=${ROLE}" \
     --set-env-vars "EXEC_ROLE=${ROLE},GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_REGION=${GCP_REGION},MODEL_NAME=${MODEL_NAME},CONFIDENCE_FLOOR=${HITL_CONFIDENCE_FLOOR},LOG_LEVEL=${LOG_LEVEL:-INFO}" \
     --set-secrets "GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest" \
@@ -282,6 +283,7 @@ gcloud run deploy "$ORCH_SVC" \
   --timeout "${ORCHESTRATOR_TIMEOUT:-3600}" \
   --min-instances "${ORCHESTRATOR_MIN_INSTANCES:-1}" \
   --max-instances 1 \
+  --ingress "${ORCHESTRATOR_INGRESS:-all}" \
   --labels "managed-by=ai-csuite-demo,csuite-prefix=${SERVICE_PREFIX},csuite-role=orchestrator" \
   --env-vars-file "$ENV_FILE" \
   --set-secrets "GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest" \
@@ -290,9 +292,51 @@ gcloud run deploy "$ORCH_SVC" \
 ORCH_URL="$(gcloud run services describe "$ORCH_SVC" \
   --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
 
-printf '\n\033[1;32m✓ Deployment complete\033[0m\n\n'
-printf '  Dashboard ....... %s\n' "$ORCH_URL"
-printf '  Agent health .... %s/api/agents/health\n' "$ORCH_URL"
-printf '  Executive agents  %d private Cloud Run services\n\n' "${#AGENT_URLS[@]}"
-printf '  Verify before you present:\n'
-printf '    curl -s %s/api/agents/health | jq\n\n' "$ORCH_URL"
+# --------------------------------------------------------------------------
+# 8. Verify -- do not report success on a system that cannot talk to itself
+# --------------------------------------------------------------------------
+log "Verifying the orchestrator can reach all ${#AGENT_URLS[@]} agents..."
+
+VERIFY_ATTEMPTS="${VERIFY_ATTEMPTS:-6}"
+VERIFY_DELAY_SECONDS="${VERIFY_DELAY_SECONDS:-10}"
+HEALTH_JSON=""
+ATTEMPT=1
+while [[ $ATTEMPT -le $VERIFY_ATTEMPTS ]]; do
+  HEALTH_JSON="$(curl -fsS --max-time 60 "${ORCH_URL}/api/agents/health" 2>/dev/null || true)"
+  case "$HEALTH_JSON" in
+    *'"all_ok": true'*|*'"all_ok":true'*) break ;;
+  esac
+  if [[ $ATTEMPT -lt $VERIFY_ATTEMPTS ]]; then
+    log "  not ready yet (attempt ${ATTEMPT}/${VERIFY_ATTEMPTS}); waiting ${VERIFY_DELAY_SECONDS}s..."
+    sleep "$VERIFY_DELAY_SECONDS"
+  fi
+  ATTEMPT=$((ATTEMPT + 1))
+done
+
+case "$HEALTH_JSON" in
+  *'"all_ok": true'*|*'"all_ok":true'*)
+    printf '\n\033[1;32m✓ Deployment complete and verified\033[0m\n\n'
+    printf '  Dashboard ....... %s\n' "$ORCH_URL"
+    printf '  Agent health .... %s/api/agents/health\n' "$ORCH_URL"
+    printf '  Executive agents  %d private Cloud Run services\n\n' "${#AGENT_URLS[@]}"
+    ;;
+  *)
+    printf '\n\033[1;33m! Deployed, but the orchestrator cannot reach every agent.\033[0m\n\n'
+    printf '%s\n\n' "${HEALTH_JSON:-  (no response from ${ORCH_URL}/api/agents/health)}"
+    printf '  How to read this:\n'
+    printf '    HTTP 404 + an HTML body  -> ingress restriction, NOT IAM. A Cloud Run\n'
+    printf '                                service is not "internal" traffic for another\n'
+    printf '                                Cloud Run service on a run.app URL. Check:\n'
+    printf '                                  gcloud run services describe %s-cfo \\\n' "$SERVICE_PREFIX"
+    printf '                                    --region %s --format="value(spec.template.metadata.annotations)"\n' "$GCP_REGION"
+    printf '                                If ingress is internal, an org policy\n'
+    printf '                                (constraints/run.allowedIngress) is overriding\n'
+    printf '                                --ingress=all. You will need Direct VPC egress.\n'
+    printf '    HTTP 403                 -> IAM. The runtime service account is missing\n'
+    printf '                                roles/run.invoker on the agent service.\n'
+    printf '    HTTP 503 + JSON body     -> the container started but could not initialise;\n'
+    printf '                                usually the Gemini API key or MODEL_NAME.\n'
+    printf '                                  gcloud run services logs read %s-cfo --region %s\n\n' "$SERVICE_PREFIX" "$GCP_REGION"
+    exit 1
+    ;;
+esac

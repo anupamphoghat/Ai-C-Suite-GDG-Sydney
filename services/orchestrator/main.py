@@ -178,44 +178,56 @@ async def agents_health() -> dict:
     """Probe every executive service so a failure is visible before the demo."""
     import httpx
 
-    from csuite_common.auth import ServiceAuthError, build_auth_headers
+    from csuite_common.auth import (
+        ServiceAuthError,
+        build_auth_headers,
+        describe_token,
+        diagnose_call_failure,
+    )
 
     results = []
     urls = settings.agent_urls
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
         for role_key in settings.active_roles:
             base = urls.get(role_key)
             if not base:
                 results.append(
-                    {"role": role_key, "ok": False, "detail": "No URL configured."}
+                    {
+                        "role": role_key,
+                        "ok": False,
+                        "detail": "No URL configured for this role. Check AGENT_URLS_JSON.",
+                    }
                 )
                 continue
+
+            entry: dict = {"role": role_key, "url": base, "ok": False}
             try:
                 headers = build_auth_headers(
                     audience=base, mode=settings.service_auth_mode
                 )
+                # Non-secret claims only -- never the token itself.
+                entry["caller_identity"] = describe_token(headers.get("Authorization", ""))
+
                 response = await client.get(f"{base}/healthz", headers=headers)
-                results.append(
-                    {
-                        "role": role_key,
-                        "ok": response.status_code == 200,
-                        "http_status": response.status_code,
-                        "detail": response.text[:200],
-                        "url": base,
-                    }
-                )
+                entry["http_status"] = response.status_code
+                if response.status_code == 200:
+                    entry["ok"] = True
+                    entry["detail"] = response.json()
+                else:
+                    entry["detail"] = diagnose_call_failure(
+                        response.status_code, response.text, base
+                    )
             except ServiceAuthError as exc:
-                results.append({"role": role_key, "ok": False, "detail": str(exc), "url": base})
+                entry["detail"] = f"Could not mint an identity token: {exc}"
             except Exception as exc:  # noqa: BLE001
-                results.append(
-                    {
-                        "role": role_key,
-                        "ok": False,
-                        "detail": f"{type(exc).__name__}: {exc}",
-                        "url": base,
-                    }
-                )
-    return {"agents": results, "all_ok": all(r["ok"] for r in results)}
+                entry["detail"] = f"{type(exc).__name__}: {exc}"
+            results.append(entry)
+
+    return {
+        "all_ok": bool(results) and all(r["ok"] for r in results),
+        "service_auth_mode": settings.service_auth_mode,
+        "agents": results,
+    }
 
 
 # --------------------------------------------------------------------------

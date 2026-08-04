@@ -181,6 +181,19 @@ exit 0
 MOCK
 chmod +x "$SANDBOX/bin/gcloud"
 
+# Mock curl so the post-deploy verification step can be exercised both ways.
+# HEALTH_FIXTURE selects what the orchestrator "reports".
+cat > "$SANDBOX/bin/curl" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${HEALTH_FIXTURE:-healthy}" == "healthy" ]]; then
+  echo '{"all_ok": true, "agents": []}'
+  exit 0
+fi
+echo '{"all_ok": false, "agents": [{"role":"cfo","ok":false,"http_status":404,"detail":"Ingress restriction, not IAM."}]}'
+exit 0
+MOCK
+chmod +x "$SANDBOX/bin/curl"
+
 # --------------------------------------------------------------------------
 # Case 1: SERVICE_PREFIX="Tech" -- capitalised, as a user would naturally type
 # --------------------------------------------------------------------------
@@ -202,6 +215,8 @@ ENV
   rm -f "$SANDBOX/orchestrator_env.yaml"
   MOCK_LOG="$SANDBOX/gcloud.log" \
   ENV_CAPTURE="$SANDBOX/orchestrator_env.yaml" \
+  HEALTH_FIXTURE="${2:-healthy}" \
+  VERIFY_ATTEMPTS=1 VERIFY_DELAY_SECONDS=0 \
   PATH="$SANDBOX/bin:$PATH" \
     bash "$SANDBOX/repo/deploy/deploy.sh" > "$SANDBOX/out.txt" 2>&1
   echo $?
@@ -242,6 +257,18 @@ else
 fi
 INVOKER=$(grep -c "add-iam-policy-binding tech-.* --role=roles/run.invoker" "$SANDBOX/gcloud.log" || true)
 check "run.invoker granted on all five agents" "$INVOKER" "5"
+
+# Ingress must be explicit and must be "all". Cloud Run does not treat one
+# Cloud Run service as internal traffic for another on a run.app URL, so
+# ingress=internal makes the agents unreachable (HTML 404) despite correct
+# IAM. Privacy comes from --no-allow-unauthenticated, not from ingress.
+INGRESS_ALL=$(grep -c -- "run deploy tech-.*--ingress all" "$SANDBOX/gcloud.log" || true)
+check "ingress set explicitly on all six services" "$INGRESS_ALL" "6"
+if grep -qE -- "run deploy .*--ingress (internal|internal-and-cloud-load-balancing)" "$SANDBOX/gcloud.log"; then
+  printf "  ${FAILM} an agent was deployed with internal ingress\n"; FAILURES=$((FAILURES+1))
+else
+  printf "  ${PASS} no service uses internal ingress\n"
+fi
 LABELS=$(grep -c "managed-by=ai-csuite-demo" "$SANDBOX/gcloud.log" || true)
 check "every service labelled" "$LABELS" "6"
 
@@ -271,7 +298,20 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# Case 2: invalid prefixes must fail fast, before any resource is created
+# Case 2: a deploy whose agents are unreachable must NOT report success
+# --------------------------------------------------------------------------
+printf '\n-- Post-deploy verification --\n'
+contains "reports success when all agents respond" "Deployment complete and verified" "$SANDBOX/out.txt"
+
+EXIT_CODE="$(run_deploy "Tech" "unhealthy")"
+check "exits non-zero when an agent is unreachable" "$EXIT_CODE" "1"
+contains "does not claim success"   "cannot reach every agent"      "$SANDBOX/out.txt"
+contains "explains the HTML 404"    "ingress restriction, NOT IAM"  "$SANDBOX/out.txt"
+contains "explains the 403 case"    "roles/run.invoker"             "$SANDBOX/out.txt"
+contains "explains the 503 case"    "Gemini API key or MODEL_NAME"  "$SANDBOX/out.txt"
+
+# --------------------------------------------------------------------------
+# Case 3: invalid prefixes must fail fast, before any resource is created
 # --------------------------------------------------------------------------
 printf '\n── Invalid prefixes rejected before any API call ──\n'
 for BAD in "9tech" "tech_demo" "tech-" "ab"; do

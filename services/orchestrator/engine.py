@@ -25,7 +25,12 @@ from typing import Any, Dict, List, Optional, Set
 import httpx
 from pydantic import BaseModel, Field
 
-from csuite_common.auth import ServiceAuthError, build_auth_headers, invalidate_token
+from csuite_common.auth import (
+    ServiceAuthError,
+    build_auth_headers,
+    diagnose_call_failure,
+    invalidate_token,
+)
 from csuite_common.config import OrchestratorSettings
 from csuite_common.llm import GeminiClient, LLMError
 from csuite_common.models import (
@@ -365,13 +370,22 @@ class RunEngine:
                 response = await client.post(handoff.url, json=payload, headers=headers)
                 handoff.http_status = response.status_code
 
-                if response.status_code == 401:
-                    # Cached identity token may have expired.
+                if response.status_code in (401, 403):
+                    # Force a fresh token, in case a cached one went stale.
                     invalidate_token(base_url)
-                    last_error = "401 Unauthorized from agent service"
+                    last_error = diagnose_call_failure(
+                        response.status_code, response.text, handoff.url
+                    )
                     continue
+                if response.status_code == 404:
+                    # Almost always an ingress restriction, which retrying
+                    # will not fix.
+                    last_error = diagnose_call_failure(404, response.text, handoff.url)
+                    break
                 if response.status_code >= 500:
-                    last_error = f"{response.status_code} from agent service"
+                    last_error = diagnose_call_failure(
+                        response.status_code, response.text, handoff.url
+                    )
                     await asyncio.sleep(min(2 ** (attempt - 1), 8))
                     continue
 

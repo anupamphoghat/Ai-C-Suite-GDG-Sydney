@@ -141,6 +141,32 @@ only deletes services carrying it.
 Set `SERVICE_PREFIX` to the namespace only — `tech`, not `tech-cfo`. The role
 suffix is appended for you, so `tech-cfo` would produce `tech-cfo-cfo`.
 
+### Ingress: why the agents are `--ingress=all`
+
+The agents are private, but privacy comes from IAM
+(`--no-allow-unauthenticated`), **not** from ingress. They must be deployed
+with `--ingress=all`.
+
+Cloud Run does not treat one Cloud Run service as "internal" traffic for
+another Cloud Run service on a `run.app` URL. An agent with
+`--ingress=internal` is therefore unreachable from the Orchestrator no matter
+how the IAM policy is set, and Cloud Run reports it as a Google-branded
+**HTML 404** — which reads like a missing service rather than a blocked one.
+
+Rule of thumb when a call to an agent fails:
+
+| Response | Cause | Fix |
+|---|---|---|
+| HTML **404** from `run.app` | Ingress | `--ingress=all` on the agent |
+| **403** | IAM | Grant `roles/run.invoker` to the runtime service account |
+| **401** | Token audience mismatch | Audience must equal the target service URL |
+| JSON **503** | Container started but failed to initialise | Check `GEMINI_API_KEY` / `MODEL_NAME` |
+
+`/api/agents/health` applies exactly this table and tells you which one it is.
+If an org policy on `constraints/run.allowedIngress` forces internal, you need
+Direct VPC egress instead — `--ingress=all` will be rejected at deploy time
+rather than failing silently.
+
 ### Rehearse the deploy without touching Google Cloud
 
 ```bash
