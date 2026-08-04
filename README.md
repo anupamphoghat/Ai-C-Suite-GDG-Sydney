@@ -112,6 +112,32 @@ Verify before you present:
 curl -s "$ORCH_URL/api/agents/health" | jq
 ```
 
+### Service naming
+
+`SERVICE_PREFIX` namespaces every resource, so this can share a project with
+other workloads without collisions. With the default `SERVICE_PREFIX="tech"`:
+
+| Resource | Name |
+|---|---|
+| Cloud Run — executives (private) | `tech-cfo` `tech-cso` `tech-cmo` `tech-chro` `tech-cto` |
+| Cloud Run — orchestrator (public) | `tech-orchestrator` |
+| Artifact Registry | `tech-csuite` |
+| Runtime service account | `tech-csuite-runtime` |
+
+Cloud Run requires lowercase, so `deploy.sh` normalises `Tech` → `tech` and
+tells you it did. It rejects anything that would produce an invalid name
+(leading digit, underscore, trailing hyphen, under 3 or over 25 characters)
+up front rather than failing partway through a deploy, and it shortens the
+derived service account name if the 30-character limit demands it.
+
+Every service is labelled `managed-by=ai-csuite-demo`. `deploy.sh` refuses to
+overwrite an existing service without that label, and `./deploy/teardown.sh`
+only deletes services carrying it.
+
+```bash
+./deploy/teardown.sh          # removes just this prefix's services
+```
+
 ## Run locally
 
 ```bash

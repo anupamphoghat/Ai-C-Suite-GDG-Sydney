@@ -33,15 +33,60 @@ GCP_PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null 
   || die "Set GCP_PROJECT_ID in .env, or run: gcloud config set project <id>"
 
 GCP_REGION="${GCP_REGION:?Set GCP_REGION in .env}"
-SERVICE_PREFIX="${SERVICE_PREFIX:?Set SERVICE_PREFIX in .env}"
 MODEL_NAME="${MODEL_NAME:?Set MODEL_NAME in .env}"
 ACTIVE_ROLES_CSV="${ACTIVE_ROLES_CSV:-cfo,cso,cmo,chro,cto}"
 GEMINI_API_KEY_SECRET="${GEMINI_API_KEY_SECRET:-GEMINI_API_KEY}"
-RUNTIME_SA_NAME="${RUNTIME_SA_NAME:-csuite-runtime}"
-ARTIFACT_REPO="${ARTIFACT_REPO:-csuite}"
 IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d%H%M%S)}"
 DECISION_LOG_BACKEND="${DECISION_LOG_BACKEND:-memory}"
 HITL_CONFIDENCE_FLOOR="${HITL_CONFIDENCE_FLOOR:-0.75}"
+
+# --------------------------------------------------------------------------
+# 0a. Service naming
+#
+# SERVICE_PREFIX namespaces every resource this script creates, so the demo
+# can share a project with other workloads without colliding. Cloud Run,
+# Artifact Registry and IAM all require lowercase names, so we normalise
+# rather than fail mid-deploy on a capitalised prefix.
+# --------------------------------------------------------------------------
+SERVICE_PREFIX="${SERVICE_PREFIX:?Set SERVICE_PREFIX in .env}"
+SERVICE_PREFIX_RAW="$SERVICE_PREFIX"
+SERVICE_PREFIX="$(printf '%s' "$SERVICE_PREFIX" | tr '[:upper:]' '[:lower:]')"
+[[ "$SERVICE_PREFIX" == "$SERVICE_PREFIX_RAW" ]] \
+  || log "Normalised SERVICE_PREFIX '${SERVICE_PREFIX_RAW}' -> '${SERVICE_PREFIX}' (Cloud Run requires lowercase)."
+
+# 3-25 characters, starting with a letter and ending alphanumeric. The lower
+# bound keeps the derived service account ID above Google's 6-character
+# minimum; the trailing-character rule avoids names like "tech--cfo".
+[[ "$SERVICE_PREFIX" =~ ^[a-z][a-z0-9-]{1,23}[a-z0-9]$ ]] || die \
+  "SERVICE_PREFIX '${SERVICE_PREFIX_RAW}' is not a valid name component.
+   It must start with a letter, end with a letter or digit, contain only
+   lowercase letters, digits and hyphens, and be 3-25 characters long."
+
+# Derived resource names, all namespaced by the prefix. Override any of them
+# in .env if you need to.
+RUNTIME_SA_NAME="${RUNTIME_SA_NAME:-${SERVICE_PREFIX}-csuite-runtime}"
+ARTIFACT_REPO="${ARTIFACT_REPO:-${SERVICE_PREFIX}-csuite}"
+
+# Cloud Run caps service names at 63 characters; the longest suffix here is
+# "-orchestrator" (13).
+LONGEST_SUFFIX="orchestrator"
+for ROLE_CHECK in ${ACTIVE_ROLES_CSV//,/ }; do
+  [[ ${#ROLE_CHECK} -gt ${#LONGEST_SUFFIX} ]] && LONGEST_SUFFIX="$ROLE_CHECK"
+done
+[[ $(( ${#SERVICE_PREFIX} + 1 + ${#LONGEST_SUFFIX} )) -le 63 ]] || die \
+  "SERVICE_PREFIX '${SERVICE_PREFIX}' is too long: '${SERVICE_PREFIX}-${LONGEST_SUFFIX}' exceeds the 63-character Cloud Run limit."
+
+# Service account IDs must be 6-30 characters. Fall back through progressively
+# shorter forms; "<prefix>-sa" always fits, given the 25-character prefix cap.
+if [[ ${#RUNTIME_SA_NAME} -gt 30 ]]; then
+  for CANDIDATE in "${SERVICE_PREFIX}-runtime" "${SERVICE_PREFIX}-sa"; do
+    if [[ ${#CANDIDATE} -le 30 ]]; then RUNTIME_SA_NAME="$CANDIDATE"; break; fi
+  done
+  [[ ${#RUNTIME_SA_NAME} -le 30 ]] || die \
+    "Cannot derive a service account ID of 30 characters or fewer from
+   SERVICE_PREFIX '${SERVICE_PREFIX}'. Set RUNTIME_SA_NAME explicitly in .env."
+  log "Shortened runtime service account name to '${RUNTIME_SA_NAME}' (30-character limit)."
+fi
 
 RUNTIME_SA="${RUNTIME_SA_NAME}@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 REGISTRY="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPO}"
@@ -50,11 +95,31 @@ IFS=',' read -ra ROLES <<< "${ACTIVE_ROLES_CSV// /}"
 log "Project ......... $GCP_PROJECT_ID"
 log "Region .......... $GCP_REGION"
 log "Prefix .......... $SERVICE_PREFIX"
-log "Roles ........... ${ROLES[*]}"
 log "Model ........... $MODEL_NAME"
 log "Image tag ....... $IMAGE_TAG"
 log "Decision log .... $DECISION_LOG_BACKEND"
+log "Artifact repo ... $ARTIFACT_REPO"
+log "Runtime SA ...... $RUNTIME_SA_NAME"
+log "Cloud Run services:"
+for ROLE in "${ROLES[@]}"; do log "    ${SERVICE_PREFIX}-${ROLE}  (private)"; done
+log "    ${SERVICE_PREFIX}-orchestrator  (public)"
 echo
+
+# Refuse to clobber a service this deployment does not own.
+for ROLE in "${ROLES[@]}" orchestrator; do
+  SVC="${SERVICE_PREFIX}-${ROLE}"
+  if gcloud run services describe "$SVC" --project "$GCP_PROJECT_ID" \
+       --region "$GCP_REGION" --format='value(metadata.name)' &>/dev/null; then
+    OWNER="$(gcloud run services describe "$SVC" --project "$GCP_PROJECT_ID" \
+      --region "$GCP_REGION" --format='value(metadata.labels.managed-by)' 2>/dev/null || true)"
+    if [[ "$OWNER" != "ai-csuite-demo" ]]; then
+      die "Cloud Run service '${SVC}' already exists in ${GCP_REGION} and was not
+   created by this demo. Pick a different SERVICE_PREFIX in .env so you do not
+   overwrite someone else's service."
+    fi
+    log "Will update existing service ${SVC}."
+  fi
+done
 
 # --------------------------------------------------------------------------
 # 1. APIs
@@ -143,6 +208,7 @@ for ROLE in "${ROLES[@]}"; do
     --timeout "${AGENT_TIMEOUT:-300}" \
     --min-instances "${AGENT_MIN_INSTANCES:-0}" \
     --max-instances "${AGENT_MAX_INSTANCES:-4}" \
+    --labels "managed-by=ai-csuite-demo,csuite-prefix=${SERVICE_PREFIX},csuite-role=${ROLE}" \
     --set-env-vars "EXEC_ROLE=${ROLE},GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_REGION=${GCP_REGION},MODEL_NAME=${MODEL_NAME},CONFIDENCE_FLOOR=${HITL_CONFIDENCE_FLOOR},LOG_LEVEL=${LOG_LEVEL:-INFO}" \
     --set-secrets "GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest" \
     --quiet
@@ -208,6 +274,7 @@ gcloud run deploy "$ORCH_SVC" \
   --timeout "${ORCHESTRATOR_TIMEOUT:-3600}" \
   --min-instances "${ORCHESTRATOR_MIN_INSTANCES:-1}" \
   --max-instances 1 \
+  --labels "managed-by=ai-csuite-demo,csuite-prefix=${SERVICE_PREFIX},csuite-role=orchestrator" \
   --env-vars-file "$ENV_FILE" \
   --set-secrets "GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest" \
   --quiet
