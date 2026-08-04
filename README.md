@@ -45,11 +45,39 @@ persona each deployment adopts and which `agents/<role>/SKILL.md` it loads.
 Adding a sixth executive is a new directory plus one registry entry — no
 change to either service.
 
+### The Orchestrator decides who to convene
+
+Before calling anyone, the Orchestrator reads the objective and the document
+and works out which executives the problem actually implicates. An
+infrastructure incident pulls in the CTO, the CFO and the CMO; it has nothing
+to say to the CHRO. Every inclusion **and every omission** carries a stated
+reason — an unexplained omission is indistinguishable from an oversight.
+
+A human approves or overrides that plan before a single agent is called. You
+can drop an executive the Orchestrator wanted, or add one it left out.
+
+The router's output is never trusted as-is. Unknown roles are dropped,
+duplicates collapsed, omissions default to not-engaged, and a router that
+selects nobody falls back to the full committee with the fallback stated
+rather than hidden.
+
 ### Handoff is sequential, and that's deliberate
 
-The Orchestrator calls the CFO first, then passes the CFO's findings to the
-CSO, and so on. Each executive sees what the committee has already concluded
-and can build on it or contest it. On the dashboard you watch the baton move.
+The engaged executives are called one at a time, in the planned order, each
+receiving the findings of those before it. So the CTO's read of an incident
+reaches the CFO before the CFO comments on the cost of it. On the dashboard
+you watch the baton move.
+
+### Two views, two audiences
+
+| Page | For | Shows |
+|---|---|---|
+| `/` | The technical audience | Routing plan, live handoff pipeline, HTTP call inspector, decision log, per-agent findings, the review queue |
+| `/summary/{run_id}` | The CEO | One consolidated recommendation, who was consulted and why, what was held back for a human, and what the human changed |
+
+The brief is deliberately *not* five executive summaries stapled together. It
+is the Orchestrator's single position, plus honest provenance. It prints to
+PDF cleanly.
 
 ---
 
@@ -214,11 +242,18 @@ orchestrator is going to call each of them over HTTP. Watch the top row."
 Objective, e.g.: *"Three enterprise accounts are up for renewal within six
 weeks and all three raised tickets during this incident. Tell me what we do."*
 
-**3 · Watch the handoff (90s).** Agent cards light up in sequence. The table
-below shows the actual endpoint, HTTP status, latency, payload sizes. Point at
-the auth column: `id_token`. These services are not on the public internet.
+**3 · The Orchestrator picks its team (60s).** Before anything is called, the
+run stops on the routing plan: *"engaging CTO, CFO, CMO — not engaging CHRO,
+this incident raises no talent questions."* Click a card to drop or add an
+executive, then approve. Say it plainly: *the model proposed the team, you
+chose it.*
 
-**4 · The run stops (2m).** This is the moment. The status banner reads
+**4 · Watch the handoff (90s).** Only the executives you approved appear in
+the pipeline, lighting up in sequence. The table shows the actual endpoint,
+HTTP status, latency, payload sizes. Point at the auth column: `id_token`.
+These services are not on the public internet.
+
+**5 · The run stops again (2m).** This is the moment. The status banner reads
 *"Paused. The orchestrator will not synthesise until you clear the
 escalations."* Walk the review queue:
 
@@ -229,15 +264,22 @@ escalations."* Walk the review queue:
 Click a citation to open the source at that exact line. Reject one, edit
 another. Say plainly: *the model doesn't get to decide this.*
 
-**5 · Synthesis (60s).** Only now does the Orchestrator consolidate. The
+**6 · Synthesis (60s).** Only now does the Orchestrator consolidate. The
 rejected finding is absent. The edited wording is present. Disagreement between
-executives is preserved under "Dissent" rather than averaged away.
+executives is preserved under "Dissent" rather than averaged away, and the
+domains nobody assessed are named rather than quietly omitted.
 
-**6 · Sign-off (30s).** One more gate before it counts as a decision.
+**7 · Sign-off (30s).** One more gate before it counts as a decision.
 
-**7 · The decision log (60s).** Scroll it. Every dispatch, every response,
+**8 · The decision log (60s).** Scroll it. Every dispatch, every response,
 every escalation, every human keystroke — timestamped and sequenced. *"This is
 what you hand your auditor."*
+
+**9 · Switch to the CEO brief (45s).** Open `/summary/{run_id}`. Same run,
+completely different register: one recommendation, who was consulted and why,
+and a table of exactly what the human changed. *"That was the engineering
+view. This is what actually lands on the CEO's desk."* Good closing beat —
+and it prints to PDF if anyone asks for it afterwards.
 
 ### If something goes wrong on stage
 
@@ -265,15 +307,29 @@ Manager and is resolved at runtime by each service. `.env` is gitignored;
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/` | Dashboard |
+| `GET` | `/` | Orchestration dashboard |
+| `GET` | `/summary/{id}` | CEO brief |
 | `GET` | `/api/config` | Dashboard configuration (no secrets) |
 | `GET` | `/api/agents/health` | Probe all five agents |
 | `POST` | `/api/runs` | Start a run (`objective` + optional `file`) |
 | `GET` | `/api/runs/{id}/events` | SSE stream of the live run |
+| `POST` | `/api/runs/{id}/plan` | Approve or amend the routing plan |
+| `GET` | `/api/runs/{id}/summary` | CEO brief payload |
 | `GET` | `/api/runs/{id}/decisions` | Decision log |
 | `GET` | `/api/runs/{id}/source` | Numbered source, for verifying citations |
-| `POST` | `/api/runs/{id}/reviews/{rid}` | Approve / edit / reject |
+| `POST` | `/api/runs/{id}/reviews/{rid}` | Approve / edit / reject a finding |
 | `POST` | `/invoke` | *(agent services)* Orchestrator entry point |
+
+## Tests
+
+```bash
+python tests/routing_test.py           # router output validation and fallbacks
+python tests/auth_diagnostics_test.py  # token cache, failure diagnosis
+./tests/deploy_dryrun.sh               # deploy.sh against a mocked gcloud
+python tests/e2e_smoke.py              # all six services, real HTTP, stubbed model
+```
+
+None of them need Google Cloud access or an API key.
 
 ---
 

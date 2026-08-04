@@ -115,6 +115,23 @@
   .cite:hover{border-color:var(--accent)}
   .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
+  /* --- routing plan --- */
+  .planrow{display:flex;gap:11px;flex-wrap:wrap;margin:13px 0}
+  .rolechip{flex:1 1 250px;min-width:224px;background:var(--panel-2);border:1px solid var(--line);
+            border-radius:11px;padding:12px 14px;cursor:pointer;transition:.15s;position:relative}
+  .rolechip.on{border-color:var(--ok);box-shadow:inset 3px 0 0 var(--ok)}
+  .rolechip.off{opacity:.55}
+  .rolechip.locked{cursor:default}
+  .rolechip:not(.locked):hover{border-color:var(--accent)}
+  .rolechip .rname{font-weight:650;font-size:14px;display:flex;justify-content:space-between;
+                   align-items:center;gap:8px;margin-bottom:4px}
+  .rolechip .rwhy{font-size:12px;color:var(--muted);line-height:1.48}
+  .rolechip .tick{font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:5px;
+                  border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .rolechip.on .tick{color:var(--ok);border-color:var(--ok)}
+  .rolechip .tick.human{color:var(--warn);border-color:var(--warn)}
+  .planhint{font-size:12.5px;color:var(--muted);margin-top:4px}
+
   .finding{border-left:3px solid var(--line);padding:11px 0 11px 14px;margin-bottom:13px}
   .finding h4{margin:0 0 5px;font-size:14.5px}
   .finding p{margin:0 0 7px;font-size:13.5px;color:#c8d1eb}
@@ -165,8 +182,16 @@
         <input type="file" id="file" />
         <button id="run">Convene the C-suite</button>
         <button id="probe" class="ghost">Check agent health</button>
+        <button id="brief" class="ghost" style="display:none">Open CEO brief →</button>
         <span class="mono" id="runmeta"></span>
       </div>
+    </div>
+  </div>
+
+  <div class="card" id="plancard" style="display:none">
+    <h2>Orchestrator routing plan <span class="count" id="pcount">—</span></h2>
+    <div class="body">
+      <div id="planbody"></div>
     </div>
   </div>
 
@@ -242,7 +267,7 @@
   const state = {
     config: null, runId: null, source: null, es: null,
     handoffs: new Map(), decisions: [], findings: [], reviews: new Map(),
-    status: null, synthesis: null,
+    status: null, synthesis: null, plan: null, planDraft: null,
   };
 
   // ---------- bootstrap ----------
@@ -258,7 +283,7 @@
       `<span class="chip">region <b>${esc(c.region)}</b></span>`,
       `<span class="chip">transport <b>HTTP</b></span>`,
       `<span class="chip">auth <b>${esc(c.service_auth_mode)}</b></span>`,
-      `<span class="chip">log <b>${esc(c.decision_log_backend)}</b></span>`,
+      `<span class="chip">routing <b>${esc(c.routing ? c.routing.mode : "all")}</b></span>`,
       `<span class="chip">confidence floor <b>${c.hitl.confidence_floor}</b></span>`,
     ].join("");
 
@@ -278,22 +303,120 @@
     $("banners").appendChild(el);
   }
 
+  // ---------- routing plan ----------
+  function roleMeta(key) {
+    return (state.config.roles || []).find(r => r.key === key) || {};
+  }
+
+  function renderPlan() {
+    const plan = state.plan;
+    if (!plan) { $("plancard").style.display = "none"; return; }
+    $("plancard").style.display = "";
+
+    const pending = state.status === "awaiting_plan_approval";
+    const draft = state.planDraft || plan.routing.filter(r => r.selected).map(r => r.role);
+    $("pcount").textContent = pending
+      ? `${draft.length} selected — awaiting your approval`
+      : `${plan.routing.filter(r => r.selected).length} of ${plan.routing.length} engaged`;
+
+    const chips = plan.routing.map(r => {
+      const on = pending ? draft.includes(r.role) : r.selected;
+      const tick = r.amended_by_human
+        ? `<span class="tick human">${r.selected ? "added by you" : "removed by you"}</span>`
+        : `<span class="tick">${on ? (pending ? "selected" : "#" + r.sequence) : "not engaged"}</span>`;
+      return `<div class="rolechip ${on ? "on" : "off"} ${pending ? "" : "locked"}"
+                   data-role="${esc(r.role)}">
+                <div class="rname">${esc(r.short_title || r.role.toUpperCase())} ${tick}</div>
+                <div class="rwhy">${esc(r.reason)}</div>
+              </div>`;
+    }).join("");
+
+    const controls = pending ? `
+      <div class="actions" style="margin-top:12px">
+        <button class="ok sm" id="planapprove">Approve this plan</button>
+        <button class="warn sm" id="planamend">Convene my selection instead</button>
+        <span class="planhint">Click a card to add or remove an executive.</span>
+      </div>` : (plan.amended_by_human
+        ? `<div class="planhint" style="color:var(--warn)">You amended the Orchestrator's plan before dispatch.</div>`
+        : `<div class="planhint">Plan approved as proposed.</div>`);
+
+    $("planbody").innerHTML = `
+      <div style="font-size:14.5px">${esc(plan.interpretation)}</div>
+      <div class="planhint" style="margin-top:6px">${esc(plan.strategy)}</div>
+      <div class="planrow">${chips}</div>
+      ${controls}`;
+
+    if (!pending) return;
+
+    $("planbody").querySelectorAll(".rolechip").forEach(el => {
+      el.addEventListener("click", () => {
+        const role = el.dataset.role;
+        const next = draft.includes(role) ? draft.filter(r => r !== role) : [...draft, role];
+        if (!next.length) return banner("warn", "At least one executive must be engaged.");
+        state.planDraft = next;
+        renderPlan();
+      });
+    });
+    $("planapprove").addEventListener("click", () => submitPlan("approve"));
+    $("planamend").addEventListener("click", () => submitPlan("amend", draft));
+  }
+
+  async function submitPlan(action, roles) {
+    $("planbody").querySelectorAll("button").forEach(b => b.disabled = true);
+    try {
+      const res = await fetch(`/api/runs/${state.runId}/plan`, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          action,
+          roles: roles || [],
+          reviewer_note: `Plan ${action}d in the live dashboard.`,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      state.planDraft = null;
+    } catch (e) {
+      banner("bad", "Could not submit the plan: " + esc(e.message));
+      $("planbody").querySelectorAll("button").forEach(b => b.disabled = false);
+    }
+  }
+
   // ---------- pipeline ----------
+  // Only executives the Orchestrator actually engaged appear here. The ones it
+  // left out, and why, are shown in the routing plan above.
+  function pipelineRoles() {
+    if (state.plan) {
+      return state.plan.routing
+        .filter(r => r.selected)
+        .sort((a, b) => a.sequence - b.sequence)
+        .map(r => ({...roleMeta(r.role), key: r.role,
+                    short_title: r.short_title || r.role.toUpperCase(),
+                    lens: (roleMeta(r.role).lens) || r.reason}));
+    }
+    return state.config ? state.config.roles : [];
+  }
+
   function renderPipeline() {
     if (!state.config) return;
+    const roles = pipelineRoles();
     const parts = ['<div class="node succeeded" style="min-width:150px">' +
       '<div class="role"><span class="dot"></span>Orchestrator</div>' +
-      '<div class="lens">Receives the objective and the uploaded document, then calls each executive over HTTP.</div>' +
+      '<div class="lens">Reads the objective, decides which executives are needed, then calls each one over HTTP.</div>' +
       `<div class="stat"><span>role</span><b>coordinator</b></div></div>`];
 
-    state.config.roles.forEach(role => {
+    if (!roles.length) {
+      parts.push('<div class="arrow">→</div>');
+      parts.push('<div class="node queued"><div class="role"><span class="dot"></span>Planning</div>' +
+                 '<div class="lens">Deciding which executives this objective needs.</div></div>');
+    }
+
+    roles.forEach(role => {
       const h = state.handoffs.get(role.key);
       const st = h ? h.status : "queued";
       parts.push(`<div class="arrow ${st === "in_flight" ? "active" : ""}">→</div>`);
       parts.push(
-        `<div class="node ${st}" style="border-left:3px solid ${esc(role.accent)}">
+        `<div class="node ${st}" style="border-left:3px solid ${esc(role.accent || "#4f8cff")}">
            <div class="role"><span class="dot"></span>${esc(role.short_title)}</div>
-           <div class="lens">${esc(role.lens)}</div>
+           <div class="lens">${esc(role.lens || "")}</div>
            <div class="stat"><span>status</span><b>${esc(st.replace("_"," "))}</b></div>
            <div class="stat"><span>http</span><b>${h && h.http_status ? h.http_status : "—"}</b></div>
            <div class="stat"><span>latency</span><b>${h && h.latency_ms != null ? h.latency_ms + "ms" : "—"}</b></div>
@@ -303,7 +426,8 @@
     $("pipeline").innerHTML = parts.join("");
 
     const done = [...state.handoffs.values()].filter(h => h.status === "succeeded").length;
-    $("hcount").textContent = `${done}/${state.config.roles.length} returned`;
+    $("hcount").textContent = roles.length
+      ? `${done}/${roles.length} returned` : "planning";
 
     const rows = [...state.handoffs.values()].sort((a,b) => a.sequence - b.sequence);
     $("handoffs").innerHTML = rows.length ? rows.map(h => `
@@ -463,7 +587,11 @@
       ${list("Next actions", s.next_actions)}
       ${list("Dissent on the committee", s.dissent)}
       ${list("Unresolved", s.unresolved)}
-      <div class="mono">Built from ${s.contributing_roles.length} executive(s) · ${esc(s.model_used)}</div>`;
+      ${list("Not assessed", s.not_assessed)}
+      <div class="mono">Built from ${s.contributing_roles.length} executive(s) · ${esc(s.model_used)}</div>
+      <div style="margin-top:12px">
+        <button class="sm" onclick="window.open('/summary/${esc(state.runId)}','_blank')">
+          Open the CEO brief →</button></div>`;
   }
 
   // ---------- citation viewer ----------
@@ -507,6 +635,8 @@
       state.runId = run.id;
       $("runmeta").textContent = `run ${run.id}` +
         (run.document ? ` · ${run.document.filename} · ${run.document.line_count} lines · sha256 ${run.document.sha256.slice(0,12)}` : " · no document");
+      $("brief").style.display = "";
+      $("brief").onclick = () => window.open(`/summary/${run.id}`, "_blank");
       connect(run.id);
     } catch (e) {
       banner("bad", "Could not start the run: " + esc(e.message));
@@ -519,8 +649,11 @@
     $("banners").innerHTML = "";
     state.handoffs.clear(); state.reviews.clear();
     state.decisions = []; state.findings = []; state.synthesis = null; state.source = null;
+    state.plan = null; state.planDraft = null; state.status = null;
+    $("brief").style.display = "none";
     if (state.es) { state.es.close(); state.es = null; }
-    renderPipeline(); renderDecisions(); renderFindings(); renderReviews(); renderSynthesis();
+    renderPlan(); renderPipeline(); renderDecisions();
+    renderFindings(); renderReviews(); renderSynthesis();
   }
 
   function connect(runId) {
@@ -532,8 +665,13 @@
       run.handoffs.forEach(h => state.handoffs.set(h.role, h));
       run.reviews.forEach(r => state.reviews.set(r.id, r));
       state.decisions = run.decision_log; state.findings = run.findings;
-      state.synthesis = run.synthesis; setStatus(run.status);
-      renderPipeline(); renderDecisions(); renderFindings(); renderReviews(); renderSynthesis();
+      state.synthesis = run.synthesis; state.plan = run.plan; setStatus(run.status);
+      renderPlan(); renderPipeline(); renderDecisions();
+      renderFindings(); renderReviews(); renderSynthesis();
+    });
+    es.addEventListener("plan", e => {
+      state.plan = JSON.parse(e.data); state.planDraft = null;
+      renderPlan(); renderPipeline();
     });
     es.addEventListener("handoff", e => {
       const h = JSON.parse(e.data); state.handoffs.set(h.role, h); renderPipeline();
@@ -558,7 +696,9 @@
   }
 
   const STATUS_TEXT = {
-    dispatching: ["ok", "Orchestrator is calling each executive agent over HTTP."],
+    planning: ["ok", "Orchestrator is deciding which executives this objective actually needs."],
+    awaiting_plan_approval: ["warn", "Paused before any agent is called. Approve the routing plan, or change who gets convened."],
+    dispatching: ["ok", "Orchestrator is calling each engaged executive agent over HTTP."],
     awaiting_review: ["warn", "Paused. The orchestrator will not synthesise until you clear the escalations on the right."],
     synthesising: ["ok", "Consolidating the human-approved findings."],
     awaiting_signoff: ["warn", "Recommendation ready — it needs your sign-off before it counts as a decision."],
@@ -568,10 +708,12 @@
   };
 
   function setStatus(status, error) {
+    const previous = state.status;
     state.status = status;
     $("banners").innerHTML = "";
     const entry = STATUS_TEXT[status];
     if (entry) banner(entry[0], entry[1] + (error ? " " + esc(error) : ""));
+    if (previous !== status) renderPlan();
     if (["completed", "rejected", "failed"].includes(status)) finish();
   }
 

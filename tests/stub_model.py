@@ -37,7 +37,41 @@ class StubGeminiClient:
             return schema.model_validate(self._agent_output(system_instruction))
         if name == "_SynthesisOutput":
             return schema.model_validate(self._synthesis_output(prompt))
+        if name == "_PlanOutput":
+            return schema.model_validate(self._plan_output(prompt))
         raise AssertionError(f"StubGeminiClient does not know schema {name}")
+
+    @staticmethod
+    def _plan_output(prompt: str) -> dict:
+        """Deterministically engage three of the five executives.
+
+        Selecting a strict subset is the point: it proves the Orchestrator
+        routes rather than fanning out to everyone, and that the pipeline and
+        synthesis honour that choice.
+        """
+        engaged = {"cto": 1, "cfo": 2, "cmo": 3}
+        offered = [
+            key for key in ("cfo", "cso", "cmo", "chro", "cto")
+            if f"- {key}:" in prompt
+        ] or ["cfo", "cso", "cmo", "chro", "cto"]
+
+        return {
+            "interpretation": "Stub interpretation of the objective.",
+            "strategy": "Stub strategy: engage only the implicated domains.",
+            "routing": [
+                {
+                    "role": key,
+                    "selected": key in engaged,
+                    "reason": (
+                        f"{key.upper()} is implicated by the source material."
+                        if key in engaged
+                        else f"{key.upper()}'s domain is not raised by this objective."
+                    ),
+                    "order": engaged.get(key, 0),
+                }
+                for key in offered
+            ],
+        }
 
     @staticmethod
     def _agent_output(system_instruction: str) -> dict:

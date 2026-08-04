@@ -40,10 +40,13 @@ from csuite_common.models import (
     Handoff,
     HandoffStatus,
     InvokeRequest,
+    PlanDecision,
     ReviewDecision,
     ReviewItem,
     ReviewStatus,
+    RoleRouting,
     Run,
+    RunPlan,
     RunStatus,
     SourceDocument,
     Synthesis,
@@ -61,6 +64,49 @@ class RunNotFoundError(KeyError):
 
 class ReviewNotFoundError(KeyError):
     pass
+
+
+class PlanNotPendingError(RuntimeError):
+    pass
+
+
+# --------------------------------------------------------------------------
+# Routing output schema
+# --------------------------------------------------------------------------
+
+
+class _RoleChoice(BaseModel):
+    role: str = Field(..., description="One of the role keys offered to you.")
+    selected: bool = Field(
+        ..., description="True if this executive's domain is implicated."
+    )
+    reason: str = Field(
+        ...,
+        description=(
+            "One sentence. If selected, what specifically you need from them. "
+            "If not selected, why their domain is not implicated."
+        ),
+    )
+    order: int = Field(
+        ...,
+        description=(
+            "Consultation order for selected roles, starting at 1. Use 0 if not "
+            "selected. The executive whose domain is most central goes first, "
+            "because later executives see earlier findings."
+        ),
+    )
+
+
+class _PlanOutput(BaseModel):
+    interpretation: str = Field(
+        ..., description="2-3 sentences: what is actually being asked, and what is at stake."
+    )
+    strategy: str = Field(
+        ..., description="1-2 sentences: why this set of executives, in this order."
+    )
+    routing: List[_RoleChoice] = Field(
+        ..., description="Exactly one entry per role offered to you."
+    )
 
 
 # --------------------------------------------------------------------------
@@ -105,6 +151,7 @@ class RunEngine:
         self._sequences: Dict[str, int] = {}
         self._subscribers: Dict[str, Set[asyncio.Queue]] = {}
         self._review_signals: Dict[str, asyncio.Event] = {}
+        self._plan_signals: Dict[str, asyncio.Event] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
 
@@ -125,6 +172,7 @@ class RunEngine:
         self._sequences[run.id] = 0
         self._subscribers[run.id] = set()
         self._review_signals[run.id] = asyncio.Event()
+        self._plan_signals[run.id] = asyncio.Event()
 
         await self._record(
             run,
@@ -136,8 +184,10 @@ class RunEngine:
                 "document": document.filename if document else None,
                 "document_lines": document.line_count if document else 0,
                 "document_sha256": document.sha256 if document else "",
-                "roles": self._settings.active_roles,
+                "available_roles": self._settings.active_roles,
+                "routing_mode": self._settings.routing_mode,
                 "hitl_enabled": self._settings.hitl_enabled,
+                "hitl_plan_approval": self._settings.hitl_plan_approval,
                 "confidence_floor": self._settings.hitl_confidence_floor,
             },
         )
@@ -211,9 +261,109 @@ class RunEngine:
 
     # ---------------- execution ----------------
 
+    async def resolve_plan(self, *, run_id: str, decision: PlanDecision) -> RunPlan:
+        """Approve or amend the routing plan. This unblocks dispatch."""
+        run = self.get_run(run_id)
+        if run.plan is None or run.status != RunStatus.AWAITING_PLAN_APPROVAL:
+            raise PlanNotPendingError(
+                f"Run '{run_id}' is not waiting for plan approval (status: {run.status.value})."
+            )
+
+        plan = run.plan
+        plan.reviewer_note = decision.reviewer_note.strip()
+        action = decision.action.strip().lower()
+
+        if action == "amend":
+            requested = [r.strip().lower() for r in decision.roles if r.strip()]
+            available = self._settings.active_roles
+            unknown = [r for r in requested if r not in available]
+            if unknown:
+                raise ValueError(
+                    f"Unknown role(s): {', '.join(unknown)}. "
+                    f"Available: {', '.join(available)}."
+                )
+            if not requested:
+                raise ValueError("An amended plan must engage at least one executive.")
+
+            original = {r.role: r.selected for r in plan.routing}
+            for entry in plan.routing:
+                now_selected = entry.role in requested
+                if now_selected != original[entry.role]:
+                    entry.amended_by_human = True
+                    entry.reason = (
+                        f"Added by the CEO. (Orchestrator had said: {entry.reason})"
+                        if now_selected
+                        else f"Removed by the CEO. (Orchestrator had said: {entry.reason})"
+                    )
+                entry.selected = now_selected
+                entry.sequence = requested.index(entry.role) + 1 if now_selected else 0
+
+            plan.amended_by_human = True
+            plan.approved_by_human = True
+            kind, summary = (
+                DecisionKind.PLAN_AMENDED,
+                f"CEO amended the plan; engaging {', '.join(r.upper() for r in requested)}",
+            )
+        elif action == "approve":
+            plan.approved_by_human = True
+            kind, summary = (
+                DecisionKind.PLAN_APPROVED,
+                "CEO approved the Orchestrator's plan: "
+                + ", ".join(r.short_title or r.role.upper() for r in plan.engaged),
+            )
+        else:
+            raise ValueError(f"Unknown plan action '{decision.action}'. Use approve or amend.")
+
+        await self._record(
+            run,
+            kind,
+            actor="human",
+            summary=summary,
+            detail={
+                "engaged": plan.engaged_roles,
+                "skipped": [r.role for r in plan.skipped],
+                "amended": plan.amended_by_human,
+                "reviewer_note": plan.reviewer_note,
+            },
+        )
+        await self._emit(run, "plan", plan.model_dump(mode="json"))
+        self._plan_signals[run_id].set()
+        return plan
+
     async def _execute(self, run_id: str) -> None:
         run = self._runs[run_id]
         try:
+            run.plan = await self._build_plan(run)
+            await self._record(
+                run,
+                DecisionKind.PLAN_PRODUCED,
+                actor="orchestrator",
+                summary=(
+                    "Plan: engage "
+                    + ", ".join(r.short_title or r.role.upper() for r in run.plan.engaged)
+                    + (
+                        "; not engaging "
+                        + ", ".join(
+                            r.short_title or r.role.upper() for r in run.plan.skipped
+                        )
+                        if run.plan.skipped
+                        else ""
+                    )
+                ),
+                detail={
+                    "interpretation": run.plan.interpretation,
+                    "strategy": run.plan.strategy,
+                    "routing": [r.model_dump(mode="json") for r in run.plan.routing],
+                    "model": run.plan.model_used,
+                },
+            )
+            await self._emit(run, "plan", run.plan.model_dump(mode="json"))
+
+            if self._settings.hitl_plan_approval:
+                run.status = RunStatus.AWAITING_PLAN_APPROVAL
+                await self._emit(run, "run_status", {"status": run.status.value})
+                await self._await_plan(run)
+
             await self._dispatch_all(run)
 
             if self._settings.hitl_enabled and run.pending_reviews:
@@ -289,13 +439,189 @@ class RunEngine:
             )
             await self._emit(run, "run_status", {"status": run.status.value, "error": run.error})
 
+    # ---------------- routing ----------------
+
+    async def _build_plan(self, run: Run) -> RunPlan:
+        """Decide which executives to engage for this objective."""
+        run.status = RunStatus.PLANNING
+        await self._emit(run, "run_status", {"status": run.status.value})
+
+        available = self._settings.active_roles
+
+        if self._settings.routing_mode == "all" or self._llm is None:
+            reason = (
+                "Routing is configured to engage the full committee."
+                if self._settings.routing_mode == "all"
+                else "No routing model available, so the full committee was engaged."
+            )
+            return self._plan_from_roles(
+                available,
+                interpretation=run.objective,
+                strategy=reason,
+                reason_for_selected=reason,
+                model_used="none",
+            )
+
+        roster = "\n".join(
+            f"- {key}: {get_role(key).title} — {get_role(key).lens}" for key in available
+        )
+        prompt_parts = [
+            "## CEO OBJECTIVE",
+            run.objective.strip(),
+            "",
+            "## AVAILABLE EXECUTIVES",
+            roster,
+        ]
+        if run.document:
+            prompt_parts += [
+                "",
+                f"## SOURCE DOCUMENT: {run.document.filename}",
+                run.document.numbered_content,
+            ]
+        else:
+            prompt_parts += ["", "## SOURCE DOCUMENT", "None supplied."]
+
+        system = (
+            "You are the Orchestrator of the GlobalTech Solutions executive committee. "
+            "Before convening anyone, you decide which executives this objective "
+            "actually needs.\n\n"
+            "RULES:\n"
+            "1. Engage an executive only when the material raises a question squarely "
+            "in their domain. Convening the whole committee for everything wastes "
+            "their time and dilutes the answer.\n"
+            f"2. Engage between {self._settings.routing_min_roles} and "
+            f"{self._settings.routing_max_roles} executives.\n"
+            "3. Give a reason for every executive, including the ones you leave out. "
+            "An unexplained omission is indistinguishable from an oversight.\n"
+            "4. Order matters: each executive sees the findings of those before them, "
+            "so start with whoever's domain is most central.\n"
+            "5. Return exactly one entry per executive offered to you."
+        )
+
+        try:
+            output = await self._llm.generate_structured(
+                system_instruction=system,
+                prompt="\n".join(prompt_parts),
+                schema=_PlanOutput,
+            )
+        except LLMError as exc:
+            logger.error("Routing failed, engaging the full committee: %s", exc)
+            return self._plan_from_roles(
+                available,
+                interpretation=run.objective,
+                strategy=f"Routing model unavailable ({exc}); engaged the full committee.",
+                reason_for_selected="Engaged by fallback after the routing step failed.",
+                model_used="none",
+            )
+
+        return self._validate_plan(output, available)
+
+    def _validate_plan(self, output: _PlanOutput, available: List[str]) -> RunPlan:
+        """Never trust the router's output shape -- normalise and bound it."""
+        by_role = {}
+        for choice in output.routing:
+            key = (choice.role or "").strip().lower()
+            if key in available and key not in by_role:
+                by_role[key] = choice
+
+        selected = [
+            (by_role[k].order, k) for k in available
+            if k in by_role and by_role[k].selected
+        ]
+        selected.sort(key=lambda pair: (pair[0] if pair[0] > 0 else 999))
+        chosen = [k for _, k in selected][: self._settings.routing_max_roles]
+
+        # Guard rail: a router that selects nobody has failed, not decided.
+        if len(chosen) < self._settings.routing_min_roles:
+            logger.warning(
+                "Router selected %d role(s); falling back to the full committee.",
+                len(chosen),
+            )
+            return self._plan_from_roles(
+                available,
+                interpretation=output.interpretation,
+                strategy=(
+                    "The routing step selected too few executives, so the full "
+                    "committee was engaged instead."
+                ),
+                reason_for_selected="Engaged by fallback: routing returned an unusable plan.",
+                model_used=self._llm.model_name if self._llm else "none",
+            )
+
+        routing: List[RoleRouting] = []
+        for key in available:
+            spec = get_role(key)
+            choice = by_role.get(key)
+            is_selected = key in chosen
+            routing.append(
+                RoleRouting(
+                    role=key,
+                    role_title=spec.title,
+                    short_title=spec.short_title,
+                    selected=is_selected,
+                    reason=(choice.reason.strip() if choice else "No routing decision returned."),
+                    sequence=chosen.index(key) + 1 if is_selected else 0,
+                )
+            )
+
+        return RunPlan(
+            interpretation=output.interpretation.strip(),
+            strategy=output.strategy.strip(),
+            routing=routing,
+            model_used=self._llm.model_name if self._llm else "none",
+        )
+
+    def _plan_from_roles(
+        self,
+        roles: List[str],
+        *,
+        interpretation: str,
+        strategy: str,
+        reason_for_selected: str,
+        model_used: str,
+    ) -> RunPlan:
+        return RunPlan(
+            interpretation=interpretation,
+            strategy=strategy,
+            model_used=model_used,
+            routing=[
+                RoleRouting(
+                    role=key,
+                    role_title=get_role(key).title,
+                    short_title=get_role(key).short_title,
+                    selected=True,
+                    reason=reason_for_selected,
+                    sequence=index,
+                )
+                for index, key in enumerate(roles, start=1)
+            ],
+        )
+
+    async def _await_plan(self, run: Run) -> None:
+        signal = self._plan_signals[run.id]
+        logger.info("Run %s blocked awaiting plan approval", run.id)
+        try:
+            await asyncio.wait_for(signal.wait(), timeout=self._settings.hitl_timeout_seconds)
+        except asyncio.TimeoutError:
+            if run.plan:
+                run.plan.approved_by_human = False
+            await self._record(
+                run,
+                DecisionKind.REVIEW_TIMED_OUT,
+                actor="orchestrator",
+                summary="Plan approval timed out; proceeding with the proposed plan",
+                detail={"engaged": run.plan.engaged_roles if run.plan else []},
+            )
+
+    # ---------------- dispatch ----------------
+
     async def _dispatch_all(self, run: Run) -> None:
-        """Call each executive agent over HTTP, in sequence."""
+        """Call each engaged executive agent over HTTP, in the planned order."""
         run.status = RunStatus.DISPATCHING
         await self._emit(run, "run_status", {"status": run.status.value})
 
         agent_urls = self._settings.agent_urls
-        roles = self._settings.active_roles
+        roles = run.plan.engaged_roles if run.plan else self._settings.active_roles
         missing = [r for r in roles if r not in agent_urls]
         if missing:
             raise RuntimeError(
@@ -644,6 +970,14 @@ class RunEngine:
                 for h in failed
             )
 
+        not_assessed = self._not_assessed(run)
+        if not_assessed:
+            lines.append("\n## DOMAINS DELIBERATELY NOT ASSESSED")
+            lines.extend(f"- {item}" for item in not_assessed)
+            lines.append(
+                "\nDo not speculate about these domains. Name them as out of scope."
+            )
+
         system = (
             "You are the Orchestrator of the GlobalTech Solutions executive committee. "
             "Consolidate the executives' human-approved findings into one recommendation "
@@ -679,8 +1013,23 @@ class RunEngine:
             dissent=[d.strip() for d in output.dissent if d.strip()],
             unresolved=[u.strip() for u in output.unresolved if u.strip()],
             contributing_roles=contributing,
+            not_assessed=self._not_assessed(run),
             model_used=self._llm.model_name,
         )
+
+    def _not_assessed(self, run: Run) -> List[str]:
+        """Domains the committee never covered, and why. Stated, not hidden."""
+        items: List[str] = []
+        if run.plan:
+            items.extend(
+                f"{entry.role_title}: {entry.reason}" for entry in run.plan.skipped
+            )
+        items.extend(
+            f"{h.role_title}: engaged but did not respond ({h.error or 'no response'})"
+            for h in run.handoffs
+            if h.status == HandoffStatus.FAILED
+        )
+        return items
 
     def _approved_material(self, run: Run) -> List[tuple[str, str]]:
         """Findings that survived the human gate, with edits applied."""

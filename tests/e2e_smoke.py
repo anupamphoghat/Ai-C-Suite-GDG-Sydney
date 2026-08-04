@@ -153,17 +153,61 @@ def main() -> int:
               run["document"]["numbered_content"][:24])
         check("document hashed", len(run["document"]["sha256"]) == 64)
 
+        print("\n── Routing: the Orchestrator picks who to engage ──")
+        run = poll(client, run_id, lambda r: r["status"] == "awaiting_plan_approval", 60)
+        check("run paused before calling any agent",
+              run["status"] == "awaiting_plan_approval", run["status"])
+        check("no agent was called before the plan was approved",
+              len(run["handoffs"]) == 0, str(len(run["handoffs"])))
+
+        plan = run["plan"]
+        check("a plan was produced", plan is not None)
+        check("plan covers every available executive",
+              len(plan["routing"]) == 5, str(len(plan["routing"])))
+        engaged = [r for r in plan["routing"] if r["selected"]]
+        skipped = [r for r in plan["routing"] if not r["selected"]]
+        check("engages a subset, not everyone", 0 < len(engaged) < 5, str(len(engaged)))
+        check("every engaged role has a reason", all(r["reason"] for r in engaged))
+        check("every skipped role has a reason too", all(r["reason"] for r in skipped))
+        check("engaged roles are ordered 1..n",
+              sorted(r["sequence"] for r in engaged) == list(range(1, len(engaged) + 1)))
+        check("plan_produced is in the decision log",
+              any(d["kind"] == "plan_produced" for d in run["decision_log"]))
+
+        print("\n── Human amends the plan ──")
+        # Drop one executive the Orchestrator wanted, add one it did not.
+        amended = [r["role"] for r in engaged][:-1] + [skipped[0]["role"]]
+        res = client.post(f"/api/runs/{run_id}/plan",
+                          json={"action": "amend", "roles": amended,
+                                "reviewer_note": "CEO adjusted the committee."})
+        check("amendment accepted", res.status_code == 200, res.text[:200])
+        plan = res.json()
+        check("plan reflects the human's selection",
+              sorted(r["role"] for r in plan["routing"] if r["selected"]) == sorted(amended))
+        check("plan marked as amended by a human", plan["amended_by_human"] is True)
+        check("changed roles are attributed to the human",
+              any(r["amended_by_human"] for r in plan["routing"]))
+
+        bad = client.post(f"/api/runs/{run_id}/plan",
+                          json={"action": "amend", "roles": ["cfo"]})
+        check("plan cannot be resolved twice", bad.status_code == 409, str(bad.status_code))
+
         print("\n── Handoffs over HTTP ──")
         run = poll(client, run_id, lambda r: r["status"] == "awaiting_review", 90)
         check("run paused for human review", run["status"] == "awaiting_review", run["status"])
-        check("five handoffs recorded", len(run["handoffs"]) == 5, str(len(run["handoffs"])))
+        check("dispatched exactly the approved executives",
+              sorted(h["role"] for h in run["handoffs"]) == sorted(amended),
+              json.dumps([h["role"] for h in run["handoffs"]]))
+        check("no unapproved executive was called",
+              not any(h["role"] not in amended for h in run["handoffs"]))
         check("every handoff succeeded",
               all(h["status"] == "succeeded" for h in run["handoffs"]),
               json.dumps([(h["role"], h["status"], h["error"]) for h in run["handoffs"]]))
         check("handoffs carry HTTP 200",
               all(h["http_status"] == 200 for h in run["handoffs"]))
-        check("handoffs are sequenced",
-              [h["sequence"] for h in run["handoffs"]] == [1, 2, 3, 4, 5])
+        check("handoffs follow the approved order",
+              [h["role"] for h in sorted(run["handoffs"], key=lambda x: x["sequence"])] == amended,
+              json.dumps([(h["sequence"], h["role"]) for h in run["handoffs"]]))
         check("latency captured for the dashboard",
               all(isinstance(h["latency_ms"], int) for h in run["handoffs"]))
 
@@ -236,8 +280,39 @@ def main() -> int:
               str(sorted(kinds)))
         check("rejected finding excluded from the synthesis",
               rejected_headline not in json.dumps(run["synthesis"]))
+        check("synthesis names the domains it did not assess",
+              len(run["synthesis"]["not_assessed"]) > 0,
+              json.dumps(run["synthesis"]["not_assessed"]))
         check("no secret anywhere in the run record",
               "stub-key-not-a-real-secret" not in json.dumps(run))
+
+        print("\n── CEO summary ──")
+        summary = client.get(f"/api/runs/{run_id}/summary").json()
+        check("summary page is served", client.get(f"/summary/{run_id}").status_code == 200)
+        check("carries one consolidated recommendation, not five",
+              isinstance(summary["synthesis"]["recommendation"], str)
+              and bool(summary["synthesis"]["recommendation"]))
+        check("no per-agent findings leak into the brief",
+              "findings" not in summary and "handoffs" not in summary,
+              str(sorted(summary.keys())))
+        check("explains who was engaged", len(summary["plan"]["engaged"]) == len(amended))
+        check("explains who was not engaged", len(summary["plan"]["skipped"]) == 5 - len(amended))
+        check("records that the human amended the plan",
+              summary["plan"]["amended_by_human"] is True)
+
+        prov = summary["provenance"]
+        check("counts executives engaged vs available",
+              prov["executives_engaged"] == len(amended) and prov["executives_available"] == 5,
+              json.dumps(prov))
+        check("counts escalations", prov["findings_escalated"] > 0, json.dumps(prov))
+        check("counts human corrections",
+              prov["human_edited"] >= 1 and prov["human_rejected"] >= 1, json.dumps(prov))
+        check("reports the final sign-off", prov["final_signoff"] == "approved",
+              prov["final_signoff"])
+        check("lists what the human changed",
+              any(h["action"] in ("edited", "rejected") for h in summary["human_interventions"]))
+        check("no secret in the brief",
+              "stub-key-not-a-real-secret" not in json.dumps(summary))
 
     finally:
         for p in procs:

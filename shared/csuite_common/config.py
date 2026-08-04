@@ -91,8 +91,20 @@ class OrchestratorSettings(BaseServiceSettings):
     agent_timeout_seconds: float = Field(default=120.0)
     agent_max_retries: int = Field(default=2)
 
-    # Roles engaged for a run, in dashboard display order.
+    # Roles available to the Orchestrator, in dashboard display order. Which
+    # of them are actually engaged is decided per run by the routing step.
     active_roles_csv: str = Field(default="cfo,cso,cmo,chro,cto")
+
+    # --- Routing ---
+    # "llm"  -> the Orchestrator reads the objective and picks the executives
+    #           whose domain is implicated.
+    # "all"  -> always engage every active role (the previous behaviour).
+    routing_mode: Literal["llm", "all"] = Field(default="llm")
+    # Guard rails on what the router may return.
+    routing_min_roles: int = Field(default=1)
+    routing_max_roles: int = Field(default=5)
+    # Require a human to approve or amend the plan before any agent is called.
+    hitl_plan_approval: bool = Field(default=True)
 
     # --- Human in the loop ---
     hitl_enabled: bool = Field(default=True)

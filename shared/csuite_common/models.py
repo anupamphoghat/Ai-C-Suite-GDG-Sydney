@@ -30,6 +30,8 @@ def _new_id(prefix: str) -> str:
 
 class RunStatus(str, Enum):
     PENDING = "pending"
+    PLANNING = "planning"
+    AWAITING_PLAN_APPROVAL = "awaiting_plan_approval"
     DISPATCHING = "dispatching"
     AWAITING_REVIEW = "awaiting_review"
     SYNTHESISING = "synthesising"
@@ -64,6 +66,9 @@ class EscalationReason(str, Enum):
 
 class DecisionKind(str, Enum):
     RUN_STARTED = "run_started"
+    PLAN_PRODUCED = "plan_produced"
+    PLAN_APPROVED = "plan_approved"
+    PLAN_AMENDED = "plan_amended"
     HANDOFF_DISPATCHED = "handoff_dispatched"
     HANDOFF_RETURNED = "handoff_returned"
     HANDOFF_FAILED = "handoff_failed"
@@ -166,6 +171,67 @@ class HealthResponse(BaseModel):
 # --------------------------------------------------------------------------
 
 
+class RoleRouting(BaseModel):
+    """The Orchestrator's decision about one executive for one objective."""
+
+    role: str
+    role_title: str = ""
+    short_title: str = ""
+    selected: bool
+    # Why this executive is needed, or why their domain is not in scope.
+    # Required either way: an unexplained omission is indistinguishable from
+    # an oversight.
+    reason: str = ""
+    sequence: int = 0
+    # True when a human overrode the Orchestrator's choice for this role.
+    amended_by_human: bool = False
+
+
+class RunPlan(BaseModel):
+    """Which executives to engage, in what order, and why.
+
+    Produced before any agent is called. The Orchestrator reads the objective
+    and the document, then delegates only to the executives whose domain is
+    actually implicated.
+    """
+
+    interpretation: str = Field(
+        default="", description="The Orchestrator's read of what is being asked."
+    )
+    strategy: str = Field(
+        default="", description="Why this set of executives, in this order."
+    )
+    routing: List[RoleRouting] = Field(default_factory=list)
+    model_used: str = ""
+    approved_by_human: bool = False
+    amended_by_human: bool = False
+    reviewer_note: str = ""
+    created_at: datetime = Field(default_factory=_now)
+
+    @property
+    def engaged(self) -> List[RoleRouting]:
+        return sorted(
+            [r for r in self.routing if r.selected], key=lambda r: r.sequence
+        )
+
+    @property
+    def skipped(self) -> List[RoleRouting]:
+        return [r for r in self.routing if not r.selected]
+
+    @property
+    def engaged_roles(self) -> List[str]:
+        return [r.role for r in self.engaged]
+
+
+class PlanDecision(BaseModel):
+    """Human -> Orchestrator, resolving the plan gate."""
+
+    action: str = Field(default="approve", description="approve | amend")
+    # Only meaningful for "amend": the full set of roles to engage, in order.
+    roles: List[str] = Field(default_factory=list)
+    reviewer_note: str = ""
+
+
 class Handoff(BaseModel):
     """One HTTP call from the Orchestrator to an Executive agent.
 
@@ -241,6 +307,8 @@ class Synthesis(BaseModel):
     )
     unresolved: List[str] = Field(default_factory=list)
     contributing_roles: List[str] = Field(default_factory=list)
+    # Domains deliberately not assessed, so the CEO knows what this does not cover.
+    not_assessed: List[str] = Field(default_factory=list)
     model_used: str = ""
 
 
@@ -251,6 +319,7 @@ class Run(BaseModel):
     objective: str
     document: Optional[SourceDocument] = None
     status: RunStatus = RunStatus.PENDING
+    plan: Optional[RunPlan] = None
     handoffs: List[Handoff] = Field(default_factory=list)
     findings: List[AgentFinding] = Field(default_factory=list)
     reviews: List[ReviewItem] = Field(default_factory=list)

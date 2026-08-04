@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Executive Brief — AI C-Suite</title>
+<style>
+  :root {
+    --bg:#0b1020; --panel:#141a2e; --panel-2:#1b2340; --line:#2a3358;
+    --text:#e8ecf7; --muted:#8e9bc4; --accent:#4f8cff;
+    --ok:#3ddc97; --warn:#ffb020; --danger:#ff5c7a;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       font-size:16px;line-height:1.65}
+  .wrap{max-width:980px;margin:0 auto;padding:34px 30px 80px}
+  header{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;
+         padding-bottom:22px;border-bottom:1px solid var(--line);margin-bottom:30px;flex-wrap:wrap}
+  .eyebrow{font-size:11.5px;text-transform:uppercase;letter-spacing:.16em;color:var(--muted);
+           margin-bottom:7px}
+  h1{margin:0;font-size:27px;letter-spacing:-.4px;line-height:1.3}
+  .meta{font-family:var(--mono);font-size:11.5px;color:var(--muted);text-align:right;line-height:1.9}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  section{margin-bottom:34px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);
+     margin:0 0 13px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  .lead{font-size:18px;line-height:1.62}
+  .callout{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+           border-radius:10px;padding:19px 22px;font-size:18px;line-height:1.6}
+  ul{margin:0;padding-left:21px}
+  li{margin-bottom:9px}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:12px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .stat .n{font-size:26px;font-weight:700;line-height:1.15}
+  .stat .l{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-top:3px}
+  .stat.ok .n{color:var(--ok)} .stat.warn .n{color:var(--warn)} .stat.bad .n{color:var(--danger)}
+
+  .roles{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:15px}
+  .role{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:12px 15px;flex:1 1 262px;min-width:236px}
+  .role.on{border-left:3px solid var(--ok)}
+  .role.off{border-left:3px solid var(--line);opacity:.72}
+  .role .name{font-weight:650;font-size:14.5px;display:flex;justify-content:space-between;
+              align-items:center;gap:8px;margin-bottom:5px}
+  .tag{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;
+       padding:2px 7px;border-radius:5px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .tag.on{color:var(--ok);border-color:var(--ok)}
+  .tag.human{color:var(--warn);border-color:var(--warn)}
+  .role .why{font-size:12.5px;color:var(--muted);line-height:1.5}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
+     color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--line)}
+  td{padding:10px 12px;border-bottom:1px solid rgba(42,51,88,.5);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  .pill{font-family:var(--mono);font-size:10px;text-transform:uppercase;padding:2px 8px;
+        border-radius:5px;white-space:nowrap}
+  .pill.edited{background:rgba(255,176,32,.15);color:var(--warn);border:1px solid var(--warn)}
+  .pill.rejected{background:rgba(255,92,122,.14);color:var(--danger);border:1px solid var(--danger)}
+  .pill.approved{background:rgba(61,220,151,.13);color:var(--ok);border:1px solid var(--ok)}
+
+  .banner{padding:12px 17px;border-radius:10px;font-size:14px;margin-bottom:24px;
+          background:rgba(61,220,151,.09);border:1px solid var(--ok);color:var(--ok)}
+  .banner.warn{background:rgba(255,176,32,.1);border-color:var(--warn);color:var(--warn)}
+  .empty{color:var(--muted);font-size:14px;padding:20px 0}
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);
+         font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.9}
+  .noprint{margin-bottom:22px;display:flex;gap:10px}
+  button{background:transparent;color:var(--text);border:1px solid var(--line);
+         border-radius:8px;padding:7px 15px;font-size:13px;cursor:pointer;font-family:inherit}
+  button:hover{border-color:var(--accent)}
+
+  @media print{
+    :root{--bg:#fff;--panel:#fff;--panel-2:#fff;--line:#ccc;--text:#111;--muted:#555}
+    body{font-size:11pt}
+    .noprint{display:none}
+    section{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="noprint">
+    <button onclick="location.href='/'">← Back to the orchestration dashboard</button>
+    <button onclick="window.print()">Print / save as PDF</button>
+  </div>
+
+  <div id="content"><div class="empty">Loading the brief…</div></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const runId = location.pathname.split("/").filter(Boolean).pop();
+
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleString([], {
+    dateStyle: "medium", timeStyle: "short"}) : "—";
+  const fmtDur = (s) => s == null ? "—"
+    : s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${s%60}s`;
+
+  async function load() {
+    let d;
+    try {
+      const res = await fetch(`/api/runs/${runId}/summary`);
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      d = await res.json();
+    } catch (e) {
+      document.getElementById("content").innerHTML =
+        `<div class="banner warn">Could not load this brief: ${esc(e.message)}</div>`;
+      return;
+    }
+    render(d);
+    // Keep polling while the run is still in flight.
+    if (!["completed","rejected","failed"].includes(d.status)) setTimeout(load, 3000);
+  }
+
+  const list = (title, arr) => arr && arr.length
+    ? `<section><h2>${title}</h2><ul>${arr.map(x => `<li>${esc(x)}</li>`).join("")}</ul></section>` : "";
+
+  function render(d) {
+    const s = d.synthesis;
+    const p = d.provenance;
+    const plan = d.plan;
+
+    const statusBanner = {
+      completed: ["", "Signed off by the CEO. This is the committee's final position."],
+      rejected:  ["warn", "The CEO rejected this recommendation. Nothing was actioned."],
+      failed:    ["warn", "This run failed before reaching a recommendation."],
+    }[d.status] || ["warn", `Run in progress — currently ${esc(d.status.replace(/_/g," "))}. This brief will update automatically.`];
+
+    const engaged = (plan?.engaged || []).map(r => `
+      <div class="role on">
+        <div class="name">${esc(r.role_title)}
+          <span class="tag ${r.amended_by_human ? "human" : "on"}">
+            ${r.amended_by_human ? "added by CEO" : "consulted #" + r.sequence}</span></div>
+        <div class="why">${esc(r.reason)}</div>
+      </div>`).join("");
+
+    const skipped = (plan?.skipped || []).map(r => `
+      <div class="role off">
+        <div class="name">${esc(r.role_title)}
+          <span class="tag ${r.amended_by_human ? "human" : ""}">
+            ${r.amended_by_human ? "removed by CEO" : "not engaged"}</span></div>
+        <div class="why">${esc(r.reason)}</div>
+      </div>`).join("");
+
+    const interventions = (d.human_interventions || []).filter(h => h.action !== "approved");
+    const interventionRows = interventions.length ? interventions.map(h => `
+      <tr>
+        <td><span class="pill ${esc(h.action)}">${esc(h.action)}</span></td>
+        <td><b>${esc(h.role_title)}</b></td>
+        <td>${esc(h.headline)}</td>
+        <td style="color:var(--muted)">${esc((h.reason || "").replace(/_/g," "))}</td>
+      </tr>`).join("")
+      : `<tr><td colspan="4" class="empty">No finding was altered or removed by a human.</td></tr>`;
+
+    document.getElementById("content").innerHTML = `
+      <header>
+        <div>
+          <div class="eyebrow">Executive Brief · GlobalTech Solutions</div>
+          <h1>${esc(d.objective)}</h1>
+        </div>
+        <div class="meta">
+          ${esc(d.run_id)}<br>
+          ${d.document ? esc(d.document.filename) + "<br>" + d.document.line_count + " lines" : "no source document"}<br>
+          ${fmtDate(d.created_at)}
+        </div>
+      </header>
+
+      <div class="banner ${statusBanner[0]}">${statusBanner[1]}</div>
+
+      ${s ? `
+        <section>
+          <h2>Recommendation</h2>
+          <div class="callout">${esc(s.recommendation)}</div>
+        </section>
+        <section>
+          <h2>The situation</h2>
+          <p class="lead">${esc(s.executive_summary)}</p>
+        </section>
+        ${list("Key risks", s.key_risks)}
+        ${list("Next actions", s.next_actions)}
+        ${list("Where the committee disagreed", s.dissent)}
+        ${list("Unresolved", s.unresolved)}
+        ${list("Not assessed", s.not_assessed)}
+      ` : `<section><h2>Recommendation</h2>
+             <div class="empty">Not yet produced — the Orchestrator is still working, or
+             escalations are waiting on a human.</div></section>`}
+
+      <section>
+        <h2>Who was consulted, and why</h2>
+        ${plan?.interpretation ? `<p style="margin-top:0">${esc(plan.interpretation)}</p>` : ""}
+        ${plan?.strategy ? `<p style="color:var(--muted);font-size:14px">${esc(plan.strategy)}</p>` : ""}
+        <div class="roles">${engaged || '<div class="empty">No executives engaged yet.</div>'}</div>
+        ${skipped ? `<div class="roles">${skipped}</div>` : ""}
+        ${plan?.amended_by_human
+          ? `<p style="color:var(--warn);font-size:13.5px">The CEO amended the Orchestrator's
+             proposed plan before any executive was contacted.</p>` : ""}
+      </section>
+
+      <section>
+        <h2>How this was produced</h2>
+        <div class="stats">
+          <div class="stat"><div class="n">${p.executives_engaged}<span style="font-size:15px;color:var(--muted)">/${p.executives_available}</span></div><div class="l">Executives consulted</div></div>
+          <div class="stat"><div class="n">${p.findings_produced}</div><div class="l">Findings produced</div></div>
+          <div class="stat ok"><div class="n">${p.findings_auto_accepted}</div><div class="l">Cited &amp; auto-accepted</div></div>
+          <div class="stat warn"><div class="n">${p.findings_escalated}</div><div class="l">Held for a human</div></div>
+          <div class="stat warn"><div class="n">${p.human_edited}</div><div class="l">Corrected by a human</div></div>
+          <div class="stat bad"><div class="n">${p.human_rejected}</div><div class="l">Rejected by a human</div></div>
+        </div>
+        <p style="color:var(--muted);font-size:13.5px;margin-top:15px">
+          Every claim above had to cite specific lines of the source document. Anything
+          uncited, low-confidence, or flagged by the executive itself was withheld from
+          this brief until a human approved, corrected or removed it. Rejected findings
+          were excluded from the synthesis entirely.
+        </p>
+      </section>
+
+      <section>
+        <h2>What the human changed</h2>
+        <table>
+          <thead><tr><th>Action</th><th>Executive</th><th>Finding</th><th>Why it was held</th></tr></thead>
+          <tbody>${interventionRows}</tbody>
+        </table>
+      </section>
+
+      <footer>
+        Run ${esc(d.run_id)} · ${p.executives_engaged} executive agents on Cloud Run ·
+        model ${esc(d.model)} · duration ${fmtDur(d.duration_seconds)} ·
+        final sign-off: ${esc((p.final_signoff || "").replace(/_/g," "))}<br>
+        <a href="/">Full orchestration detail, decision log and per-agent findings →</a>
+      </footer>`;
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

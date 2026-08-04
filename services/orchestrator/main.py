@@ -24,17 +24,26 @@ from csuite_common.config import orchestrator_settings
 from csuite_common.llm import GeminiClient, LLMError
 from csuite_common.models import (
     DecisionLogEntry,
+    HandoffStatus,
     HealthResponse,
+    PlanDecision,
     ReviewDecision,
     ReviewItem,
+    ReviewStatus,
     Run,
+    RunPlan,
     SourceDocument,
 )
 from csuite_common.roles import ROLE_REGISTRY, get_role, number_lines, sha256_of
 from csuite_common.secrets import SecretResolutionError, resolve_secret
 
 from decision_log import build_decision_log
-from engine import ReviewNotFoundError, RunEngine, RunNotFoundError
+from engine import (
+    PlanNotPendingError,
+    ReviewNotFoundError,
+    RunEngine,
+    RunNotFoundError,
+)
 
 settings = orchestrator_settings()
 logging.basicConfig(
@@ -125,6 +134,15 @@ async def dashboard() -> FileResponse:
     return FileResponse(index)
 
 
+@app.get("/summary/{run_id}", include_in_schema=False)
+async def summary_page(run_id: str) -> FileResponse:
+    """The CEO-facing brief. The dashboard is the how; this is the what."""
+    page = STATIC_DIR / "summary.html"
+    if not page.is_file():
+        raise HTTPException(status_code=404, detail="Summary asset not found.")
+    return FileResponse(page)
+
+
 # --------------------------------------------------------------------------
 # Health and configuration
 # --------------------------------------------------------------------------
@@ -146,11 +164,17 @@ async def config() -> dict:
         "decision_log_backend": settings.decision_log_backend,
         "synthesis_available": not state.init_error,
         "init_error": state.init_error,
+        "routing": {
+            "mode": settings.routing_mode,
+            "min_roles": settings.routing_min_roles,
+            "max_roles": settings.routing_max_roles,
+        },
         "hitl": {
             "enabled": settings.hitl_enabled,
             "confidence_floor": settings.hitl_confidence_floor,
             "require_citations": settings.hitl_require_citations,
             "final_signoff": settings.hitl_final_signoff,
+            "plan_approval": settings.hitl_plan_approval,
             "timeout_seconds": settings.hitl_timeout_seconds,
         },
         "upload": {
@@ -351,6 +375,19 @@ def _sse(event: str, data: dict) -> str:
 # --------------------------------------------------------------------------
 
 
+@app.post("/api/runs/{run_id}/plan", response_model=RunPlan)
+async def resolve_plan(run_id: str, decision: PlanDecision) -> RunPlan:
+    """Approve or amend the routing plan. This unblocks dispatch."""
+    try:
+        return await _engine().resolve_plan(run_id=run_id, decision=decision)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No run '{run_id}'.") from exc
+    except PlanNotPendingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.get("/api/runs/{run_id}/reviews", response_model=List[ReviewItem])
 async def list_reviews(run_id: str) -> List[ReviewItem]:
     try:
@@ -374,6 +411,99 @@ async def resolve_review(
         raise HTTPException(status_code=404, detail=f"No review '{review_id}'.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/runs/{run_id}/summary")
+async def get_summary(run_id: str) -> dict:
+    """The CEO-facing view of a run.
+
+    Deliberately the Orchestrator's consolidated position -- not five
+    independent executive summaries. What the CEO needs is one answer, plus
+    honest provenance: who was consulted, what was held back for a human, and
+    what the human changed.
+    """
+    try:
+        run = _engine().get_run(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No run '{run_id}'.") from exc
+
+    total_findings = sum(len(f.findings) for f in run.findings)
+    escalated = [r for r in run.reviews if r.reason.value != "final_signoff"]
+    by_status = {
+        status.value: len([r for r in escalated if r.status == status])
+        for status in ReviewStatus
+    }
+    signoff = next(
+        (r for r in run.reviews if r.reason.value == "final_signoff"), None
+    )
+
+    duration_seconds = None
+    if run.completed_at:
+        duration_seconds = int((run.completed_at - run.created_at).total_seconds())
+
+    return {
+        "run_id": run.id,
+        "status": run.status.value,
+        "objective": run.objective,
+        "document": (
+            {
+                "filename": run.document.filename,
+                "line_count": run.document.line_count,
+                "sha256": run.document.sha256,
+            }
+            if run.document
+            else None
+        ),
+        "created_at": run.created_at,
+        "completed_at": run.completed_at,
+        "duration_seconds": duration_seconds,
+        "plan": (
+            {
+                "interpretation": run.plan.interpretation,
+                "strategy": run.plan.strategy,
+                "approved_by_human": run.plan.approved_by_human,
+                "amended_by_human": run.plan.amended_by_human,
+                "reviewer_note": run.plan.reviewer_note,
+                "engaged": [r.model_dump(mode="json") for r in run.plan.engaged],
+                "skipped": [r.model_dump(mode="json") for r in run.plan.skipped],
+            }
+            if run.plan
+            else None
+        ),
+        "synthesis": run.synthesis.model_dump(mode="json") if run.synthesis else None,
+        "provenance": {
+            "executives_engaged": len(
+                [h for h in run.handoffs if h.status == HandoffStatus.SUCCEEDED]
+            ),
+            "executives_available": len(settings.active_roles),
+            "findings_produced": total_findings,
+            "findings_auto_accepted": total_findings - len(escalated),
+            "findings_escalated": len(escalated),
+            "human_approved": by_status.get("approved", 0),
+            "human_edited": by_status.get("edited", 0),
+            "human_rejected": by_status.get("rejected", 0),
+            "timed_out": by_status.get("timed_out", 0),
+            "final_signoff": signoff.status.value if signoff else "not_required",
+            "signoff_note": signoff.reviewer_note if signoff else "",
+        },
+        # Every point at which a human changed the outcome. This is the
+        # anti-hallucination story told as evidence rather than assertion.
+        "human_interventions": [
+            {
+                "role_title": r.role_title,
+                "action": r.status.value,
+                "reason": r.reason.value,
+                "headline": r.original_headline,
+                "note": r.reviewer_note,
+                "at": r.resolved_at,
+            }
+            for r in run.reviews
+            if r.status
+            in {ReviewStatus.EDITED, ReviewStatus.REJECTED, ReviewStatus.APPROVED}
+            and r.resolved_at is not None
+        ],
+        "model": settings.model_name,
+    }
 
 
 @app.get("/api/runs/{run_id}/source")
