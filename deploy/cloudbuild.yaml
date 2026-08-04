@@ -1,29 +1,47 @@
 # Builds one image from an explicit Dockerfile and pushes it to Artifact
-# Registry. Both service images are produced by this same config; the caller
-# supplies _DOCKERFILE and _IMAGE.
+# Registry. Both service images come from this same config; the caller
+# supplies _DOCKERFILE, _IMAGE and _IMAGE_LATEST.
 #
 #   gcloud builds submit --config deploy/cloudbuild.yaml \
-#     --substitutions=_DOCKERFILE=services/executive/Dockerfile,_IMAGE=<image>
+#     --substitutions=_DOCKERFILE=services/executive/Dockerfile,_IMAGE=...,_IMAGE_LATEST=...
+#
+# NOTE: Cloud Build resolves enum-typed fields (options.machineType,
+# options.logging, ...) when it parses this file, *before* substitutions are
+# applied. A ${_VAR} in one of those fields is therefore never a valid enum
+# literal and the build fails with ".options.machineType: unused". Keep
+# substitutions out of enum fields.
 steps:
+  # Warm the layer cache from the previous build. Ignored on a first build,
+  # when the :latest tag does not exist yet.
+  - name: gcr.io/cloud-builders/docker
+    id: pull-cache
+    entrypoint: bash
+    args:
+      - -c
+      - docker pull ${_IMAGE_LATEST} || echo "No cached image yet; building from scratch."
+
   - name: gcr.io/cloud-builders/docker
     id: build
     args:
       - build
       - --file=${_DOCKERFILE}
       - --tag=${_IMAGE}
-      - --cache-from=${_IMAGE}
+      - --tag=${_IMAGE_LATEST}
+      - --cache-from=${_IMAGE_LATEST}
       - .
 
 images:
   - ${_IMAGE}
+  - ${_IMAGE_LATEST}
 
 options:
+  # Enum literal, never a substitution. Required so builds log to Cloud
+  # Logging rather than needing a logs bucket.
   logging: CLOUD_LOGGING_ONLY
-  machineType: ${_MACHINE_TYPE}
 
 substitutions:
   _DOCKERFILE: services/executive/Dockerfile
   _IMAGE: ""
-  _MACHINE_TYPE: E2_HIGHCPU_8
+  _IMAGE_LATEST: ""
 
 timeout: 1200s

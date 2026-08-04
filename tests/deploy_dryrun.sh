@@ -76,6 +76,77 @@ else
 fi
 
 # --------------------------------------------------------------------------
+# Cloud Build config validation
+#
+# Cloud Build resolves enum-typed fields when it parses cloudbuild.yaml,
+# before substitutions are applied. A ${_VAR} in one of those fields fails at
+# submit time with e.g. ".options.machineType: unused". The mocked gcloud
+# below cannot catch that, so check it statically.
+# --------------------------------------------------------------------------
+printf '\n-- Cloud Build config --\n'
+CB="$REPO_ROOT/deploy/cloudbuild.yaml"
+
+if command -v python3 >/dev/null; then
+  CB_REPORT="$(python3 - "$CB" <<'PY'
+import re, sys
+
+path = sys.argv[1]
+raw = open(path, encoding="utf-8").read()
+# Scan the config only, not the comments explaining it.
+text = "\n".join(l for l in raw.splitlines() if not l.lstrip().startswith("#"))
+problems, notes = [], []
+
+# Fields Cloud Build treats as enums; a substitution in any of them is fatal.
+ENUM_FIELDS = (
+    "machineType", "logging", "substitutionOption", "requestedVerifyOption",
+    "logStreamingOption", "defaultLogsBucketBehavior", "sourceProvenanceHash",
+    "status", "pool",
+)
+for field in ENUM_FIELDS:
+    for m in re.finditer(rf"^\s*{field}\s*:\s*(.+?)\s*$", text, re.M):
+        if "${" in m.group(1):
+            problems.append(f"{field}: substitution '{m.group(1)}' in an enum field")
+
+# Every ${_VAR} used must have a default declared under substitutions:.
+used = set(re.findall(r"\$\{(_[A-Z0-9_]+)\}", text))
+sub_block = re.search(r"^substitutions:\s*$(.*?)(?=^\S|\Z)", text, re.M | re.S)
+declared = set(re.findall(r"^\s+(_[A-Z0-9_]+)\s*:", sub_block.group(1), re.M)) if sub_block else set()
+for name in sorted(used - declared):
+    problems.append(f"{name} is used but not declared under substitutions:")
+
+notes.append(f"substitutions used: {', '.join(sorted(used)) or 'none'}")
+
+try:
+    import yaml
+    doc = yaml.safe_load(raw)
+    if not doc.get("steps"):
+        problems.append("no build steps defined")
+    notes.append(f"steps: {len(doc.get('steps', []))}, images: {len(doc.get('images', []))}")
+except ImportError:
+    notes.append("PyYAML not installed; skipped structural parse")
+except Exception as exc:
+    problems.append(f"YAML parse error: {exc}")
+
+for n in notes:
+    print("NOTE " + n)
+for p in problems:
+    print("FAIL " + p)
+PY
+)"
+  while IFS= read -r LINE; do
+    [[ -z "$LINE" ]] && continue
+    if [[ "$LINE" == FAIL* ]]; then
+      printf "  ${FAILM} %s\n" "${LINE#FAIL }"; FAILURES=$((FAILURES + 1))
+    else
+      printf "  ${PASS} %s\n" "${LINE#NOTE }"
+    fi
+  done <<< "$CB_REPORT"
+  [[ "$CB_REPORT" == *FAIL* ]] || printf "  ${PASS} no substitutions in enum-typed fields\n"
+else
+  printf "  ${FAILM} python3 not found; skipped cloudbuild.yaml validation\n"
+fi
+
+# --------------------------------------------------------------------------
 # Mock gcloud: records every invocation, returns plausible output.
 # --------------------------------------------------------------------------
 mkdir -p "$SANDBOX/bin"

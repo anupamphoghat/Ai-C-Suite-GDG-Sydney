@@ -179,15 +179,17 @@ fi
 # --------------------------------------------------------------------------
 EXEC_IMAGE="${REGISTRY}/executive:${IMAGE_TAG}"
 ORCH_IMAGE="${REGISTRY}/orchestrator:${IMAGE_TAG}"
+EXEC_IMAGE_LATEST="${REGISTRY}/executive:latest"
+ORCH_IMAGE_LATEST="${REGISTRY}/orchestrator:latest"
 
 log "Building executive image..."
 gcloud builds submit --config deploy/cloudbuild.yaml \
-  --substitutions "_DOCKERFILE=services/executive/Dockerfile,_IMAGE=${EXEC_IMAGE}" \
+  --substitutions "_DOCKERFILE=services/executive/Dockerfile,_IMAGE=${EXEC_IMAGE},_IMAGE_LATEST=${EXEC_IMAGE_LATEST}" \
   --project "$GCP_PROJECT_ID" --quiet
 
 log "Building orchestrator image..."
 gcloud builds submit --config deploy/cloudbuild.yaml \
-  --substitutions "_DOCKERFILE=services/orchestrator/Dockerfile,_IMAGE=${ORCH_IMAGE}" \
+  --substitutions "_DOCKERFILE=services/orchestrator/Dockerfile,_IMAGE=${ORCH_IMAGE},_IMAGE_LATEST=${ORCH_IMAGE_LATEST}" \
   --project "$GCP_PROJECT_ID" --quiet
 
 # --------------------------------------------------------------------------
