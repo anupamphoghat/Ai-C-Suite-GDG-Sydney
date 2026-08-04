@@ -2,10 +2,15 @@
 .gitignore
 .dockerignore
 .env
-.env.example
+*.env
 .DS_Store
 venv/
 .venv/
 __pycache__/
 *.pyc
-deploy.sh
+.local_logs/
+.pytest_cache/
+deploy/
+tests/
+docs/
+README.md

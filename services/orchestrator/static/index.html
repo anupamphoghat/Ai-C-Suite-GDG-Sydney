@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI C-Suite — Multi-Agent Orchestration</title>
+<style>
+  :root {
+    --bg:#0b1020; --panel:#141a2e; --panel-2:#1b2340; --line:#2a3358;
+    --text:#e8ecf7; --muted:#8e9bc4; --accent:#4f8cff;
+    --ok:#3ddc97; --warn:#ffb020; --danger:#ff5c7a; --idle:#4a5478;
+    --radius:14px; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       font-size:15px;line-height:1.55}
+  a{color:var(--accent)}
+  header{display:flex;align-items:center;justify-content:space-between;gap:24px;
+         padding:16px 28px;border-bottom:1px solid var(--line);background:var(--panel);
+         position:sticky;top:0;z-index:20}
+  .brand{display:flex;align-items:center;gap:14px}
+  .brand h1{margin:0;font-size:19px;letter-spacing:-.2px}
+  .brand .sub{color:var(--muted);font-size:12.5px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{font-size:11.5px;padding:4px 10px;border-radius:999px;background:var(--panel-2);
+        border:1px solid var(--line);color:var(--muted);font-family:var(--mono)}
+  .chip b{color:var(--text);font-weight:600}
+  main{padding:22px 28px 60px;max-width:1680px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:22px;align-items:start}
+  @media (max-width:1180px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+        overflow:hidden;margin-bottom:22px}
+  .card > h2{margin:0;padding:13px 18px;font-size:13px;text-transform:uppercase;
+             letter-spacing:.09em;color:var(--muted);border-bottom:1px solid var(--line);
+             display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .card > h2 .count{font-family:var(--mono);color:var(--text);font-size:12px;
+                    background:var(--panel-2);padding:2px 9px;border-radius:999px}
+  .body{padding:18px}
+  label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.07em;
+        color:var(--muted);margin-bottom:7px}
+  textarea,input[type=text]{width:100%;background:var(--bg);color:var(--text);
+        border:1px solid var(--line);border-radius:10px;padding:11px 13px;
+        font-family:inherit;font-size:14.5px;resize:vertical}
+  textarea:focus,input:focus{outline:none;border-color:var(--accent)}
+  .file-row{display:flex;gap:12px;align-items:center;margin-top:14px;flex-wrap:wrap}
+  input[type=file]{color:var(--muted);font-size:13px;max-width:100%}
+  button{background:var(--accent);color:#04122e;border:0;border-radius:10px;
+         padding:10px 18px;font-weight:650;font-size:14px;cursor:pointer;font-family:inherit}
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.45;cursor:not-allowed;filter:none}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  button.ok{background:var(--ok);color:#04231a}
+  button.warn{background:var(--warn);color:#2b1b00}
+  button.danger{background:var(--danger);color:#2d0512}
+  button.sm{padding:6px 13px;font-size:12.5px;border-radius:8px}
+
+  /* --- handoff pipeline --- */
+  .pipeline{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:4px 0 10px}
+  .node{min-width:172px;flex:1;background:var(--panel-2);border:1px solid var(--line);
+        border-radius:12px;padding:13px;position:relative;transition:.25s}
+  .node.in_flight{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,140,255,.18)}
+  .node.succeeded{border-color:var(--ok)}
+  .node.failed{border-color:var(--danger)}
+  .node .role{font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--idle);flex:none}
+  .node.queued .dot{background:var(--idle)}
+  .node.in_flight .dot{background:var(--accent);animation:pulse 1s infinite}
+  .node.succeeded .dot{background:var(--ok)}
+  .node.failed .dot{background:var(--danger)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .node .lens{color:var(--muted);font-size:11.5px;margin:5px 0 9px;min-height:30px}
+  .node .stat{font-family:var(--mono);font-size:11px;color:var(--muted);
+              display:flex;justify-content:space-between;gap:6px}
+  .node .stat b{color:var(--text);font-weight:600}
+  .arrow{display:flex;align-items:center;color:var(--line);padding:0 7px;font-size:19px;flex:none}
+  .arrow.active{color:var(--accent)}
+
+  /* --- tables --- */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;
+     text-transform:uppercase;letter-spacing:.06em;padding:9px 12px;
+     border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+  td{padding:9px 12px;border-bottom:1px solid rgba(42,51,88,.5);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  .scroll{max-height:430px;overflow-y:auto}
+  .mono{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .kind{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:5px;
+        background:var(--panel-2);border:1px solid var(--line);white-space:nowrap}
+  .kind.human{background:rgba(255,176,32,.15);border-color:var(--warn);color:var(--warn)}
+  .kind.escalated{background:rgba(255,92,122,.14);border-color:var(--danger);color:var(--danger)}
+  .kind.accepted{background:rgba(61,220,151,.13);border-color:var(--ok);color:var(--ok)}
+  .kind.handoff{background:rgba(79,140,255,.14);border-color:var(--accent);color:var(--accent)}
+
+  /* --- reviews --- */
+  .review{border:1px solid var(--line);border-radius:12px;padding:15px;margin-bottom:13px;
+          background:var(--panel-2)}
+  .review.pending{border-color:var(--warn);box-shadow:0 0 0 3px rgba(255,176,32,.1)}
+  .review.signoff{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,140,255,.13)}
+  .review.approved,.review.edited{border-color:var(--ok);opacity:.72}
+  .review.rejected,.review.timed_out{border-color:var(--danger);opacity:.72}
+  .review .head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;
+                margin-bottom:9px;flex-wrap:wrap}
+  .review .who{font-weight:700}
+  .badge{font-size:10.5px;font-family:var(--mono);padding:3px 8px;border-radius:6px;
+         background:rgba(255,176,32,.15);color:var(--warn);border:1px solid var(--warn);
+         white-space:nowrap}
+  .badge.ok{background:rgba(61,220,151,.13);color:var(--ok);border-color:var(--ok)}
+  .badge.bad{background:rgba(255,92,122,.14);color:var(--danger);border-color:var(--danger)}
+  .review .why{font-size:12.5px;color:var(--warn);margin-bottom:9px}
+  .review .detail{font-size:14px;margin-bottom:10px;white-space:pre-wrap}
+  .cites{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:11px}
+  .cite{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:6px;
+        background:var(--bg);border:1px solid var(--line);cursor:pointer;color:var(--accent)}
+  .cite:hover{border-color:var(--accent)}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+  .finding{border-left:3px solid var(--line);padding:11px 0 11px 14px;margin-bottom:13px}
+  .finding h4{margin:0 0 5px;font-size:14.5px}
+  .finding p{margin:0 0 7px;font-size:13.5px;color:#c8d1eb}
+  .conf{font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+  .empty{color:var(--muted);font-size:13.5px;text-align:center;padding:26px 10px}
+  .synth h3{margin:0 0 8px;font-size:15px}
+  .synth ul{margin:0 0 14px;padding-left:19px;font-size:13.5px}
+  .synth li{margin-bottom:5px}
+  .banner{padding:11px 16px;border-radius:10px;margin-bottom:16px;font-size:13.5px;
+          display:flex;gap:10px;align-items:center}
+  .banner.warn{background:rgba(255,176,32,.12);border:1px solid var(--warn);color:var(--warn)}
+  .banner.bad{background:rgba(255,92,122,.12);border:1px solid var(--danger);color:var(--danger)}
+  .banner.ok{background:rgba(61,220,151,.1);border:1px solid var(--ok);color:var(--ok)}
+  dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);
+         border-radius:var(--radius);padding:0;max-width:860px;width:92vw}
+  dialog::backdrop{background:rgba(4,8,20,.75)}
+  dialog .body{max-height:66vh;overflow:auto}
+  pre{font-family:var(--mono);font-size:12px;white-space:pre-wrap;margin:0;color:#c8d1eb}
+  mark{background:rgba(79,140,255,.3);color:var(--text);border-radius:3px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#4f8cff" stroke-width="1.7">
+      <circle cx="12" cy="5" r="2.4"/><circle cx="4.5" cy="18" r="2.4"/><circle cx="12" cy="18" r="2.4"/>
+      <circle cx="19.5" cy="18" r="2.4"/><path d="M12 7.4v3.2M12 10.6H4.5v5M12 10.6v5M12 10.6h7.5v5"/>
+    </svg>
+    <div>
+      <h1>AI C-Suite Orchestration</h1>
+      <div class="sub">Five executive agents on Cloud Run, coordinated over HTTP, with a human in the loop</div>
+    </div>
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+
+<main>
+  <div id="banners"></div>
+
+  <div class="card">
+    <h2>Brief the executive committee</h2>
+    <div class="body">
+      <label for="objective">CEO objective</label>
+      <textarea id="objective" rows="2" placeholder="e.g. Assess this and tell me what we do about it before the board meeting."></textarea>
+      <div class="file-row">
+        <input type="file" id="file" />
+        <button id="run">Convene the C-suite</button>
+        <button id="probe" class="ghost">Check agent health</button>
+        <span class="mono" id="runmeta"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Agent handoff <span class="count" id="hcount">—</span></h2>
+    <div class="body">
+      <div class="pipeline" id="pipeline"></div>
+      <div class="scroll" style="max-height:250px">
+        <table>
+          <thead><tr>
+            <th>#</th><th>Agent</th><th>Method</th><th>Endpoint</th><th>Auth</th>
+            <th>Status</th><th>Latency</th><th>Req/Res</th><th>Findings</th><th>Escalated</th>
+          </tr></thead>
+          <tbody id="handoffs"><tr><td colspan="10" class="empty">No run yet.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>Decision log <span class="count" id="dcount">0</span></h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>#</th><th>Time</th><th>Event</th><th>Actor</th><th>Summary</th></tr></thead>
+            <tbody id="decisions"><tr><td colspan="5" class="empty">Nothing logged yet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Executive findings <span class="count" id="fcount">0</span></h2>
+        <div class="body scroll" id="findings"><div class="empty">Awaiting agent responses.</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Human in the loop <span class="count" id="rcount">0</span></h2>
+        <div class="body scroll" id="reviews">
+          <div class="empty">Nothing has been escalated. Low-confidence and uncited findings land here.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Synthesis</h2>
+        <div class="body synth" id="synthesis"><div class="empty">Produced once every escalation is resolved.</div></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<dialog id="source">
+  <h2 style="margin:0;padding:13px 18px;font-size:13px;text-transform:uppercase;
+             letter-spacing:.09em;color:#8e9bc4;border-bottom:1px solid #2a3358;
+             display:flex;justify-content:space-between;align-items:center">
+    <span id="srcname">Source document</span>
+    <button class="ghost sm" onclick="document.getElementById('source').close()">Close</button>
+  </h2>
+  <div class="body"><pre id="srcbody"></pre></div>
+</dialog>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const time = (iso) => iso ? new Date(iso).toLocaleTimeString([], {hour12:false}) : "—";
+
+  const state = {
+    config: null, runId: null, source: null, es: null,
+    handoffs: new Map(), decisions: [], findings: [], reviews: new Map(),
+    status: null, synthesis: null,
+  };
+
+  // ---------- bootstrap ----------
+  async function boot() {
+    try {
+      state.config = await (await fetch("/api/config")).json();
+    } catch (e) {
+      return banner("bad", "Could not load orchestrator config: " + e.message);
+    }
+    const c = state.config;
+    $("chips").innerHTML = [
+      `<span class="chip">model <b>${esc(c.model)}</b></span>`,
+      `<span class="chip">region <b>${esc(c.region)}</b></span>`,
+      `<span class="chip">transport <b>HTTP</b></span>`,
+      `<span class="chip">auth <b>${esc(c.service_auth_mode)}</b></span>`,
+      `<span class="chip">log <b>${esc(c.decision_log_backend)}</b></span>`,
+      `<span class="chip">confidence floor <b>${c.hitl.confidence_floor}</b></span>`,
+    ].join("");
+
+    if (!c.synthesis_available) banner("warn", "Synthesis model unavailable: " + esc(c.init_error));
+    const unconfigured = c.roles.filter(r => !r.configured).map(r => r.short_title);
+    if (unconfigured.length) {
+      banner("bad", `No endpoint configured for: ${unconfigured.join(", ")}. ` +
+                    `Set AGENT_URLS_JSON — deploy/deploy.sh does this automatically.`);
+    }
+    renderPipeline();
+  }
+
+  function banner(kind, html) {
+    const el = document.createElement("div");
+    el.className = "banner " + kind;
+    el.innerHTML = html;
+    $("banners").appendChild(el);
+  }
+
+  // ---------- pipeline ----------
+  function renderPipeline() {
+    if (!state.config) return;
+    const parts = ['<div class="node succeeded" style="min-width:150px">' +
+      '<div class="role"><span class="dot"></span>Orchestrator</div>' +
+      '<div class="lens">Receives the objective and the uploaded document, then calls each executive over HTTP.</div>' +
+      `<div class="stat"><span>role</span><b>coordinator</b></div></div>`];
+
+    state.config.roles.forEach(role => {
+      const h = state.handoffs.get(role.key);
+      const st = h ? h.status : "queued";
+      parts.push(`<div class="arrow ${st === "in_flight" ? "active" : ""}">→</div>`);
+      parts.push(
+        `<div class="node ${st}" style="border-left:3px solid ${esc(role.accent)}">
+           <div class="role"><span class="dot"></span>${esc(role.short_title)}</div>
+           <div class="lens">${esc(role.lens)}</div>
+           <div class="stat"><span>status</span><b>${esc(st.replace("_"," "))}</b></div>
+           <div class="stat"><span>http</span><b>${h && h.http_status ? h.http_status : "—"}</b></div>
+           <div class="stat"><span>latency</span><b>${h && h.latency_ms != null ? h.latency_ms + "ms" : "—"}</b></div>
+           <div class="stat"><span>findings</span><b>${h ? h.finding_count : 0}</b></div>
+         </div>`);
+    });
+    $("pipeline").innerHTML = parts.join("");
+
+    const done = [...state.handoffs.values()].filter(h => h.status === "succeeded").length;
+    $("hcount").textContent = `${done}/${state.config.roles.length} returned`;
+
+    const rows = [...state.handoffs.values()].sort((a,b) => a.sequence - b.sequence);
+    $("handoffs").innerHTML = rows.length ? rows.map(h => `
+      <tr>
+        <td class="mono">${h.sequence}</td>
+        <td><b>${esc(h.role_title)}</b></td>
+        <td class="mono">${esc(h.method)}</td>
+        <td class="mono" title="${esc(h.url)}">${esc(shortUrl(h.url))}</td>
+        <td class="mono">${esc(h.auth_mode)}</td>
+        <td><span class="kind ${h.status === "succeeded" ? "accepted" : h.status === "failed" ? "escalated" : "handoff"}">
+            ${h.http_status ?? h.status}</span>${h.error ? `<div class="mono">${esc(h.error)}</div>` : ""}</td>
+        <td class="mono">${h.latency_ms != null ? h.latency_ms + "ms" : "—"}</td>
+        <td class="mono">${h.request_bytes}B / ${h.response_bytes}B</td>
+        <td class="mono">${h.finding_count}</td>
+        <td class="mono">${h.escalated_count}</td>
+      </tr>`).join("")
+      : `<tr><td colspan="10" class="empty">No run yet.</td></tr>`;
+  }
+
+  const shortUrl = (u) => { try { const x = new URL(u); return x.host + x.pathname; }
+                            catch { return u || "—"; } };
+
+  // ---------- decision log ----------
+  const KIND_CLASS = {
+    human_approved:"human", human_edited:"human", human_rejected:"human",
+    finding_escalated:"escalated", review_timed_out:"escalated", handoff_failed:"escalated",
+    run_failed:"escalated", finding_accepted:"accepted", run_completed:"accepted",
+    handoff_dispatched:"handoff", handoff_returned:"handoff",
+  };
+
+  function renderDecisions() {
+    $("dcount").textContent = state.decisions.length;
+    const rows = [...state.decisions].sort((a,b) => b.sequence - a.sequence);
+    $("decisions").innerHTML = rows.length ? rows.map(d => `
+      <tr>
+        <td class="mono">${d.sequence}</td>
+        <td class="mono">${time(d.at)}</td>
+        <td><span class="kind ${KIND_CLASS[d.kind] || ""}">${esc(d.kind)}</span></td>
+        <td class="mono">${esc(d.actor)}</td>
+        <td>${esc(d.summary)}</td>
+      </tr>`).join("")
+      : `<tr><td colspan="5" class="empty">Nothing logged yet.</td></tr>`;
+  }
+
+  // ---------- findings ----------
+  function renderFindings() {
+    const total = state.findings.reduce((n, f) => n + f.findings.length, 0);
+    $("fcount").textContent = total;
+    if (!state.findings.length) {
+      $("findings").innerHTML = `<div class="empty">Awaiting agent responses.</div>`;
+      return;
+    }
+    $("findings").innerHTML = state.findings.map(af => {
+      const accent = (state.config.roles.find(r => r.key === af.role) || {}).accent || "#4f8cff";
+      const items = af.findings.map(f => `
+        <div class="finding" style="border-left-color:${esc(accent)}">
+          <h4>${esc(f.headline)}</h4>
+          <p>${esc(f.detail)}</p>
+          <div class="cites">${f.citations.map(c =>
+            `<span class="cite" data-l="${c.line_start}">L${c.line_start}-L${c.line_end}</span>`).join("")}
+            <span class="conf">confidence ${Number(f.confidence).toFixed(2)}</span></div>
+        </div>`).join("");
+      const questions = af.open_questions.length
+        ? `<div class="mono" style="margin-top:6px">Open questions: ${af.open_questions.map(esc).join(" · ")}</div>` : "";
+      return `<div style="margin-bottom:22px">
+          <div style="font-weight:700;color:${esc(accent)};margin-bottom:5px">${esc(af.role_title)}</div>
+          <div style="font-size:13.5px;color:#c8d1eb;margin-bottom:11px">${esc(af.summary)}</div>
+          ${items}
+          <div style="font-size:13.5px"><b>Recommendation:</b> ${esc(af.recommendation)}</div>
+          ${questions}
+        </div>`;
+    }).join("");
+    bindCitations($("findings"));
+  }
+
+  // ---------- reviews ----------
+  function renderReviews() {
+    const all = [...state.reviews.values()];
+    const pending = all.filter(r => r.status === "pending");
+    $("rcount").textContent = pending.length ? `${pending.length} waiting on you` : `${all.length} resolved`;
+
+    if (!all.length) {
+      $("reviews").innerHTML = `<div class="empty">Nothing has been escalated. Low-confidence and uncited findings land here.</div>`;
+      return;
+    }
+    const order = { pending: 0, edited: 1, approved: 1, rejected: 1, timed_out: 1 };
+    all.sort((a, b) => (order[a.status] - order[b.status]) || a.created_at.localeCompare(b.created_at));
+
+    $("reviews").innerHTML = all.map(r => {
+      const isSignoff = r.reason === "final_signoff";
+      const cls = r.status === "pending" ? (isSignoff ? "pending signoff" : "pending") : r.status;
+      const badge = r.status === "pending"
+        ? `<span class="badge">${esc(r.reason.replace(/_/g," "))}</span>`
+        : `<span class="badge ${["approved","edited"].includes(r.status) ? "ok" : "bad"}">${esc(r.status)}</span>`;
+      const cites = r.citations.map(c =>
+        `<span class="cite" data-l="${c.line_start}">L${c.line_start}-L${c.line_end}</span>`).join("");
+      const controls = r.status !== "pending" ? "" : `
+        <textarea id="ed_${r.id}" rows="3" placeholder="Optional: correct the text before approving…">${esc(r.original_detail)}</textarea>
+        <div class="actions" style="margin-top:9px">
+          <button class="ok sm" data-act="approve" data-id="${r.id}">${isSignoff ? "Sign off" : "Approve as-is"}</button>
+          <button class="warn sm" data-act="edit" data-id="${r.id}">Approve with my edit</button>
+          <button class="danger sm" data-act="reject" data-id="${r.id}">Reject</button>
+        </div>`;
+      const note = r.reviewer_note ? `<div class="mono">Reviewer note: ${esc(r.reviewer_note)}</div>` : "";
+      return `<div class="review ${cls}">
+          <div class="head">
+            <div><span class="who">${esc(r.role_title)}</span>
+              <span class="mono"> · confidence ${Number(r.confidence).toFixed(2)} · ${r.citations.length} citation(s)</span></div>
+            ${badge}
+          </div>
+          ${r.status === "pending" ? `<div class="why">${esc(r.reason_detail)}</div>` : ""}
+          <div style="font-weight:600;margin-bottom:5px">${esc(r.original_headline)}</div>
+          <div class="detail">${esc(r.status === "edited" ? r.edited_detail : r.original_detail)}</div>
+          <div class="cites">${cites || '<span class="mono">no citations — unverifiable</span>'}</div>
+          ${controls}${note}
+        </div>`;
+    }).join("");
+
+    bindCitations($("reviews"));
+    $("reviews").querySelectorAll("button[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => resolve(btn.dataset.id, btn.dataset.act, btn));
+    });
+  }
+
+  async function resolve(reviewId, action, btn) {
+    const box = $("ed_" + reviewId);
+    const body = {
+      action,
+      edited_detail: action === "edit" && box ? box.value : "",
+      reviewer_note: `Reviewed in the live dashboard (${action}).`,
+    };
+    btn.closest(".actions").querySelectorAll("button").forEach(b => b.disabled = true);
+    try {
+      const res = await fetch(`/api/runs/${state.runId}/reviews/${reviewId}`, {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    } catch (e) {
+      banner("bad", "Could not record your decision: " + esc(e.message));
+      btn.closest(".actions").querySelectorAll("button").forEach(b => b.disabled = false);
+    }
+  }
+
+  // ---------- synthesis ----------
+  function renderSynthesis() {
+    const s = state.synthesis;
+    if (!s) {
+      $("synthesis").innerHTML = `<div class="empty">Produced once every escalation is resolved.</div>`;
+      return;
+    }
+    const list = (title, arr) => arr && arr.length
+      ? `<h3>${title}</h3><ul>${arr.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+    $("synthesis").innerHTML = `
+      <h3>Executive summary</h3><p style="font-size:13.5px">${esc(s.executive_summary)}</p>
+      <h3>Recommendation</h3><p style="font-size:14px"><b>${esc(s.recommendation)}</b></p>
+      ${list("Key risks", s.key_risks)}
+      ${list("Next actions", s.next_actions)}
+      ${list("Dissent on the committee", s.dissent)}
+      ${list("Unresolved", s.unresolved)}
+      <div class="mono">Built from ${s.contributing_roles.length} executive(s) · ${esc(s.model_used)}</div>`;
+  }
+
+  // ---------- citation viewer ----------
+  function bindCitations(root) {
+    root.querySelectorAll(".cite").forEach(el => {
+      el.addEventListener("click", () => showSource(parseInt(el.dataset.l, 10)));
+    });
+  }
+
+  async function showSource(line) {
+    if (!state.source) {
+      try { state.source = await (await fetch(`/api/runs/${state.runId}/source`)).json(); }
+      catch { return; }
+    }
+    if (!state.source.filename) return;
+    $("srcname").textContent = state.source.filename;
+    $("srcbody").innerHTML = state.source.lines.map((t, i) =>
+      (i + 1 === line ? `<mark>${esc(t)}</mark>` : esc(t))).join("\n");
+    $("source").showModal();
+    const mark = $("srcbody").querySelector("mark");
+    if (mark) mark.scrollIntoView({block: "center"});
+  }
+
+  // ---------- run lifecycle ----------
+  async function startRun() {
+    const objective = $("objective").value.trim();
+    if (!objective) return banner("warn", "Give the committee an objective first.");
+
+    const form = new FormData();
+    form.append("objective", objective);
+    if ($("file").files[0]) form.append("file", $("file").files[0]);
+
+    $("run").disabled = true;
+    $("run").textContent = "Convening…";
+    reset();
+
+    try {
+      const res = await fetch("/api/runs", {method: "POST", body: form});
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      const run = await res.json();
+      state.runId = run.id;
+      $("runmeta").textContent = `run ${run.id}` +
+        (run.document ? ` · ${run.document.filename} · ${run.document.line_count} lines · sha256 ${run.document.sha256.slice(0,12)}` : " · no document");
+      connect(run.id);
+    } catch (e) {
+      banner("bad", "Could not start the run: " + esc(e.message));
+      $("run").disabled = false;
+      $("run").textContent = "Convene the C-suite";
+    }
+  }
+
+  function reset() {
+    $("banners").innerHTML = "";
+    state.handoffs.clear(); state.reviews.clear();
+    state.decisions = []; state.findings = []; state.synthesis = null; state.source = null;
+    if (state.es) { state.es.close(); state.es = null; }
+    renderPipeline(); renderDecisions(); renderFindings(); renderReviews(); renderSynthesis();
+  }
+
+  function connect(runId) {
+    const es = new EventSource(`/api/runs/${runId}/events`);
+    state.es = es;
+
+    es.addEventListener("snapshot", e => {
+      const run = JSON.parse(e.data);
+      run.handoffs.forEach(h => state.handoffs.set(h.role, h));
+      run.reviews.forEach(r => state.reviews.set(r.id, r));
+      state.decisions = run.decision_log; state.findings = run.findings;
+      state.synthesis = run.synthesis; setStatus(run.status);
+      renderPipeline(); renderDecisions(); renderFindings(); renderReviews(); renderSynthesis();
+    });
+    es.addEventListener("handoff", e => {
+      const h = JSON.parse(e.data); state.handoffs.set(h.role, h); renderPipeline();
+    });
+    es.addEventListener("decision", e => {
+      state.decisions.push(JSON.parse(e.data)); renderDecisions();
+    });
+    es.addEventListener("finding", e => {
+      state.findings.push(JSON.parse(e.data)); renderFindings();
+    });
+    es.addEventListener("review", e => {
+      const r = JSON.parse(e.data); state.reviews.set(r.id, r); renderReviews();
+    });
+    es.addEventListener("review_resolved", e => {
+      const r = JSON.parse(e.data); state.reviews.set(r.id, r); renderReviews();
+    });
+    es.addEventListener("synthesis", e => {
+      state.synthesis = JSON.parse(e.data); renderSynthesis();
+    });
+    es.addEventListener("run_status", e => setStatus(JSON.parse(e.data).status, JSON.parse(e.data).error));
+    es.onerror = () => { if (es.readyState === EventSource.CLOSED) finish(); };
+  }
+
+  const STATUS_TEXT = {
+    dispatching: ["ok", "Orchestrator is calling each executive agent over HTTP."],
+    awaiting_review: ["warn", "Paused. The orchestrator will not synthesise until you clear the escalations on the right."],
+    synthesising: ["ok", "Consolidating the human-approved findings."],
+    awaiting_signoff: ["warn", "Recommendation ready — it needs your sign-off before it counts as a decision."],
+    completed: ["ok", "Run complete and signed off."],
+    rejected: ["bad", "You rejected the recommendation. Nothing was actioned."],
+    failed: ["bad", "Run failed."],
+  };
+
+  function setStatus(status, error) {
+    state.status = status;
+    $("banners").innerHTML = "";
+    const entry = STATUS_TEXT[status];
+    if (entry) banner(entry[0], entry[1] + (error ? " " + esc(error) : ""));
+    if (["completed", "rejected", "failed"].includes(status)) finish();
+  }
+
+  function finish() {
+    $("run").disabled = false;
+    $("run").textContent = "Convene the C-suite";
+  }
+
+  // ---------- agent health probe ----------
+  async function probe() {
+    $("probe").disabled = true;
+    try {
+      const r = await (await fetch("/api/agents/health")).json();
+      $("banners").innerHTML = "";
+      r.agents.forEach(a => banner(a.ok ? "ok" : "bad",
+        `<b>${esc(a.role.toUpperCase())}</b> ${a.ok ? "reachable" : "unreachable"} — ${esc(a.detail || "")}`));
+    } catch (e) {
+      banner("bad", "Health probe failed: " + esc(e.message));
+    } finally { $("probe").disabled = false; }
+  }
+
+  $("run").addEventListener("click", startRun);
+  $("probe").addEventListener("click", probe);
+  boot();
+})();
+</script>
+</body>
+</html>

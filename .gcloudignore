@@ -1,0 +1,16 @@
+# Controls what is uploaded to Cloud Build. Keeps secrets and local state out
+# of the build context.
+.git/
+.gitignore
+.gcloudignore
+.env
+*.env
+!.env.example
+.DS_Store
+venv/
+.venv/
+__pycache__/
+*.pyc
+.local_logs/
+.pytest_cache/
+docs/

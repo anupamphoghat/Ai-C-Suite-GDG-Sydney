@@ -1,0 +1,29 @@
+# Builds one image from an explicit Dockerfile and pushes it to Artifact
+# Registry. Both service images are produced by this same config; the caller
+# supplies _DOCKERFILE and _IMAGE.
+#
+#   gcloud builds submit --config deploy/cloudbuild.yaml \
+#     --substitutions=_DOCKERFILE=services/executive/Dockerfile,_IMAGE=<image>
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - --file=${_DOCKERFILE}
+      - --tag=${_IMAGE}
+      - --cache-from=${_IMAGE}
+      - .
+
+images:
+  - ${_IMAGE}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: ${_MACHINE_TYPE}
+
+substitutions:
+  _DOCKERFILE: services/executive/Dockerfile
+  _IMAGE: ""
+  _MACHINE_TYPE: E2_HIGHCPU_8
+
+timeout: 1200s
