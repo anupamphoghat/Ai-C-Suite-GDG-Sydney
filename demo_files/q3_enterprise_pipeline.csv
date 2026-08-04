@@ -1,0 +1,13 @@
+account_name,region,tier,arr_usd,stage,renewal_date,nrr_pct,csat_score,risk_flag
+Meridian Financial Group,San Francisco,Enterprise,1250000,Renewal,2026-08-15,108,4.6,Low
+Northwind Logistics,London,Enterprise,890000,Renewal,2026-08-02,95,3.8,Medium
+Kestrel Health Systems,San Francisco,Enterprise,2100000,Renewal,2026-09-01,112,4.7,Low
+Orion Retail Holdings,Singapore,Enterprise,640000,Renewal,2026-07-28,88,3.2,High
+Vantage Manufacturing,London,Enterprise,975000,Renewal,2026-08-20,101,4.3,Low
+Pinnacle Insurance Co,San Francisco,Enterprise,1580000,Renewal,2026-09-10,97,4.0,Medium
+Sable Telecom,Singapore,Enterprise,730000,Renewal,2026-08-05,79,2.9,High
+Ashford Capital Partners,London,Enterprise,1120000,Renewal,2026-09-18,105,4.5,Low
+Brightline Energy,San Francisco,Enterprise,860000,Renewal,2026-08-12,91,3.6,Medium
+Lumen Biotech,Singapore,Enterprise,540000,New Logo,2026-10-01,,4.1,Low
+TidalWave Freight,London,Enterprise,470000,New Logo,2026-10-15,,3.9,Low
+Redstone Public Sector,San Francisco,Enterprise,1980000,Renewal,2026-09-25,83,3.1,High

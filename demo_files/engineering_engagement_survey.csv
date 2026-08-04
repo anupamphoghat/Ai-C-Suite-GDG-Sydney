@@ -1,0 +1,8 @@
+team,headcount,avg_tenure_months,engagement_score_pct,mgr_trust_score_pct,voluntary_attrition_last_12mo,top_cited_concern
+Platform Infrastructure,18,22,71,68,3,"On-call load / burnout"
+Core Analytics,14,15,58,52,4,"Unclear career progression"
+Enterprise Integrations,11,29,79,81,1,"None significant"
+Client Success Engineering,9,11,49,44,3,"Comp vs. market rate"
+Data & AI Modules,7,8,74,70,0,"Team still scaling, wants more headcount"
+Security & Compliance,6,26,83,85,0,"None significant"
+SMB Cloud Tools,12,19,63,60,2,"Tooling / legacy tech debt"
